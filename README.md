@@ -1,4 +1,4 @@
-# ldt-reduction
+# LDTReduction
 
 Collection of data reduction scripts in python for LDT instruments:
   - `lmi/`      Scripts for the Large Monolithic Imager
