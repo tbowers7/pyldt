@@ -9,10 +9,6 @@ import os,sys,glob
 ## Numpy
 import numpy as np
 
-from scipy.interpolate import CubicSpline
-import matplotlib.pyplot as plt
-from patsy import dmatrix
-import statsmodels.api as sm
 
 ## Astropy
 from astropy.nddata import CCDData
@@ -26,7 +22,7 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 
 ## Local libraries
-from trim_oscan import *
+
 
 
 ###========================================================================

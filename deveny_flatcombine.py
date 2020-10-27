@@ -26,7 +26,7 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 
 ## Local libraries
-from trim_oscan import *
+
 
 
 ###========================================================================

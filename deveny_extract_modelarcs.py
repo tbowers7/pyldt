@@ -27,7 +27,7 @@ from astropy.io import fits
 import ccdproc as ccdp
 
 ## Local libraries
-from trim_oscan import *
+
 
 
 ###========================================================================

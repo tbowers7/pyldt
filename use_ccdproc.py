@@ -20,8 +20,7 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 
 ## Local libraries
-from trim_oscan import *
-
+import pyldt
 
 ###========================================================================
 ### Define named things
@@ -82,7 +81,7 @@ for ccd, file_name in files.ccds(ccdsum=BIN22, bitpix=16, imagetyp='bias',
     trim_name = '{0}t{1}'.format(file_name[:-5],file_name[-5:])
     
     # Fit the overscan section, subrtract it, then trim the image
-    ccd = trim_oscan(ccd, BIASSEC, TRIMSEC)
+    ccd = pyldt.trim_oscan(ccd, BIASSEC, TRIMSEC)
     
     # Save the result
     ccd.write(trim_name, overwrite=True)
@@ -137,7 +136,7 @@ for ccd, file_name in files.ccds(ccdsum=BIN22, bitpix=16,
         continue
 
     # Fit the overscan section, subrtract it, then trim the image
-    ccd = trim_oscan(ccd, BIASSEC, TRIMSEC)
+    ccd = pyldt.trim_oscan(ccd, BIASSEC, TRIMSEC)
     
     ccd = ccdp.subtract_bias(ccd, combined_bias)
 
