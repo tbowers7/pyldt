@@ -36,10 +36,19 @@ software of your choosing.
 
 # Built-In Libraries
 from __future__ import division, print_function, absolute_import
+import glob
+import os
+import shutil
+import warnings
 from pathlib import Path
+
+# Numpy
+import numpy as np
 
 # Astropy and CCDPROC
 from astropy.modeling import models
+from astropy.stats import mad_std
+from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
@@ -47,16 +56,97 @@ from ccdproc.utils.slices import slice_from_string
 class _Images:
     """Internal class, parent of LMI & DeVeny."""
 
-    def __init__(self, path, debug=True):
-        self.path = Path(path)
+    def __init__(self, path, debug=True, show_warnings=False):
+        """__init__: Initialize the internal _Images class.
+        Args:
+            path (:TYPE:`str`)
+                Path to the directory containing the images to be reduced.
+            debug (:TYPE:`bool`)
+                Description.
+            show_warnings (:TYPE:`bool`)
+                Description.
+        """
+        self.path = path
         self.debug = debug
         if self.debug:
             print(self.path)
+        # Unless specified, suppress AstroPy warnings
+        if not show_warnings:
+            warnings.simplefilter('ignore', AstropyWarning)
+            warnings.simplefilter('ignore', UserWarning)
         # Add attributes that need to be specified for the instrument
         self.biassec = None
         self.trimsec = None
+        self.prefix = None
+        # Define various named constants
+        self.BIN11 = '1 1'
+        self.BIN22 = '2 2'
+        self.BIN33 = '3 3'
+        self.BIN44 = '4 4'
 
-        pass
+    def copy_raw(self, overwrite=False):
+        """Copy raw FITS files to subdirectory 'raw' for safekeeping.
+        If a directory containing the raw data is not extant, create it and copy
+        all FITS files there as a backup.
+        :return:
+        """
+        raw_data = Path(self.path, 'raw')
+        if not raw_data.exists():
+            raw_data.mkdir(exist_ok=True)
+            new_raw = True
+        else:
+            new_raw = False
+        # Copy files to raw_data
+        if new_raw or (not new_raw and overwrite):
+            if self.debug:
+                print(self.path + '/' + self.prefix + '.*.fits')
+            for img in glob.iglob(self.path + '/' + self.prefix + '.*.fits'):
+                print(f'Copying {img} to {raw_data}...')
+                shutil.copy2(img, raw_data)
+
+    def biascombine(self, binning=None, output="Bias.fits"):
+        """Finds and combines bias frames with the indicated binning
+
+        :param binning:
+        :param output:
+        :return:
+        """
+        # First, build the file collection
+        file_cl = ccdp.ImageFileCollection(self.path,
+                                           glob_include=self.prefix + '.*.fits')
+        # Loop through files,
+        for ccd, file_name in file_cl.ccds(ccdsum=binning, bitpix=16,
+                                           imagetyp='bias', return_fname=True):
+            # Construct the name of the trimmed file
+            trim_name = '{0}t{1}'.format(file_name[:-5], file_name[-5:])
+            # Fit the overscan section, subtract it, then trim the image
+            ccd = trim_oscan(ccd, self.biassec, self.trimsec)
+            # Save the result
+            ccd.write(trim_name, overwrite=True)
+            # Delete the input file to save space
+            os.remove(file_name)
+
+        # Collect the trimmed biases
+        t_bias_cl = ccdp.ImageFileCollection(self.path, glob_include='*t.fits')
+
+        # If we have a fresh list of trimmed biases to work with...
+        if len(t_bias_cl.files) != 0:
+
+            if self.debug:
+                print(f"Combining bias frames with binning {binning}...")
+            combined_bias = ccdp.combine(t_bias_cl.files, method='median',
+                                         sigma_clip=True,
+                                         sigma_clip_low_thresh=5,
+                                         sigma_clip_high_thresh=5,
+                                         sigma_clip_func=np.ma.median,
+                                         sigma_clip_dev_func=mad_std,
+                                         mem_limit=4e9)
+            # Add FITS keyword BIASCOMB
+            combined_bias.meta['biascomb'] = True
+            combined_bias.write(output, overwrite=True)
+            # Delete input files to save space
+            for f in t_bias_cl.files:
+                os.remove(f)
 
 
 class LMI(_Images):
@@ -77,6 +167,7 @@ class LMI(_Images):
                 If unspecified, use the values suggested in the LMI User Manual.
         """
         _Images.__init__(self, path)
+        # Set the BIASSEC and TRIMSEC appropriately
         if biassec is None:
             self.biassec = '[3100:3124, 3:3079]'
         else:
@@ -85,6 +176,13 @@ class LMI(_Images):
             self.trimsec = '[30:3094,   3:3079]'
         else:
             self.trimsec = trimsec
+        # File prefix
+        self.prefix = 'lmi'
+        # Define standard filenames
+        self.ZEROFN1 = 'Zero_1x1.fits'
+        self.ZEROFN2 = 'Zero_2x2.fits'
+        self.ZEROFN3 = 'Zero_3x3.fits'
+        self.ZEROFN4 = 'Zero_4x4.fits'
 
 
 class DeVeny(_Images):
@@ -92,9 +190,30 @@ class DeVeny(_Images):
 
     """
 
-    def __init__(self, path):
+    def __init__(self, path, biassec=None, trimsec=None):
+        """__init__: Initialize DeVeny class.
+        Args:
+           path (:TYPE:`str`)
+                Path to the directory containing the images to be reduced.
+            biassec (:TYPE:`str`)
+                The IRAF-style overscan region to be subtracted from each frame.
+                If unspecified, use the values suggested in the LMI User Manual.
+            trimsec (:TYPE:`str`)
+                The IRAF-style image region to be retained in each frame.
+                If unspecified, use the values suggested in the LMI User Manual.
+        """
         _Images.__init__(self, path)
-        pass
+        # Set the BIASSEC and TRIMSEC appropriately
+        if biassec is None:
+            self.biassec = '[2101:2144,5:512]'
+        else:
+            self.biassec = biassec
+        if trimsec is None:
+            self.trimsec = '[54:  2096,5:512]'
+        else:
+            self.trimsec = trimsec
+        # Define standard filenames
+        self.ZEROFN = 'Zero.fits'
 
 
 def function1(arg1, debug=True):

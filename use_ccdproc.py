@@ -136,7 +136,7 @@ for ccd, file_name in files.ccds(ccdsum=BIN22, bitpix=16,
         continue
 
     # Fit the overscan section, subrtract it, then trim the image
-    ccd = pyldt.trim_oscan(ccd, BIASSEC, TRIMSEC)
+    ccd = pyldt.trim_oscanf(ccd, BIASSEC, TRIMSEC)
     
     ccd = ccdp.subtract_bias(ccd, combined_bias)
 
