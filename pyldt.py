@@ -359,6 +359,7 @@ class LMI(_Images):
 
         :return:
         """
+        self.copy_raw()
         self.bias_combine()
         self.bias_subtract()
         self.flat_combine()
