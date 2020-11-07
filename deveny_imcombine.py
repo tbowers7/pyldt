@@ -56,10 +56,6 @@ warnings.simplefilter('ignore', AstropyWarning)
 warnings.simplefilter('ignore', UserWarning)
 
 
-def mmms(image):
-    return(np.min(image),np.max(image),np.mean(image),np.std(image))
-
-
 
 
 # #if __name__ == "__main__":
