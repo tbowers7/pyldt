@@ -158,7 +158,7 @@ class _Images:
             for f in t_bias_cl.files:
                 os.remove(f)
 
-    def _biassubtract(self, binning=None):
+    def _biassubtract(self, binning=None, deveny=False):
         """
 
         :param binning:
@@ -193,6 +193,11 @@ class _Images:
 
             # Subtract master bias
             ccd = ccdp.subtract_bias(ccd, combined_bias)
+
+            # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
+            if deveny:
+                if len(ccd.header['filtrear']) == 9:
+                    ccd.header['filtrear'] = ccd.header['filtrear'][0:5]
 
             # Save the result; delete input file
             ccd.write(f'{file_name[:-5]}b{file_name[-5:]}', overwrite=True)
@@ -371,7 +376,7 @@ class DeVeny(_Images):
 
     """
 
-    def __init__(self, path, biassec=None, trimsec=None):
+    def __init__(self, path, biassec=None, trimsec=None, prefix=None):
         """__init__: Initialize DeVeny class.
         Args:
            path (:TYPE:`str`)
@@ -384,34 +389,46 @@ class DeVeny(_Images):
                 If unspecified, use the values suggested in the LMI User Manual.
         """
         _Images.__init__(self, path)
+        self.bin_factor = 1
+        self.binning = f'{self.bin_factor} {self.bin_factor}'
+
         # Set the BIASSEC and TRIMSEC appropriately
         self.biassec = '[2101:2144,5:512]' if biassec is None else biassec
         self.trimsec = '[54:  2096,5:512]' if trimsec is None else trimsec
 
-        self.bin_factor = 1
-        self.prefix = None  # Make this something
+        # File prefix -- DeVeny files prefix with the UT date
+        if prefix is None:
+            # Look at all the 20*.fits files in this directory, and choose
+            fitsfiles = glob.glob(self.path + '/' + '20*.fits')
+            if fitsfiles:
+                slashind = fitsfiles[0].rfind('/')
+                self.prefix = fitsfiles[0][slashind + 1:slashind + 9]
+        else:
+            self.prefix = prefix
+        print(self.prefix)
+        # Define standard filenames
+        self.zerofn = 'bias.fits'
 
+    def bias_combine(self):
+        """
 
-def function1(arg1, debug=True):
-    """One line description.
-    Explanatory paragraph. Link example
-    `Paramiko <http://docs.paramiko.org/en/latest/>`_
-    Internal reference example
-    :func:`dataservants.utils.files.getDirListing`.
-    Args:
-        arg1 (:TYPE:`internal link or datatype`)
-            Description.
-        debug (:obj:`bool`)
-            Bool to trigger additional debugging outputs. Defaults to False.
-    Returns:
-        ret1 (:TYPE:`internal link or datatype`)
-            Description.
-            .. code-block:: python
-                stuff = things
-    """
-    if debug:
-        print('I am debugging!')
-    return arg1
+        :return:
+        """
+        self._biascombine(self.binning, output=self.zerofn)
+
+    def bias_subtract(self):
+        """
+
+        :return:
+        """
+        self._biassubtract(self.binning, deveny=True)
+
+    def flat_combine(self):
+        """
+
+        :return:
+        """
+        self._flatcombine(self.binning, outbase=f'flat_bin{self.bin_factor}_')
 
 
 def _trim_oscan(ccd, biassec, trimsec, model=None):
