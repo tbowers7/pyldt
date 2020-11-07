@@ -38,15 +38,16 @@ software of your choosing.
 from __future__ import division, print_function, absolute_import
 import glob
 import os
+from pathlib import Path
 import shutil
 import warnings
-from pathlib import Path
 
 # Numpy
 import numpy as np
 
 # Astropy and CCDPROC
 from astropy.modeling import models
+from astropy.nddata import CCDData
 from astropy.stats import mad_std
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
@@ -78,11 +79,9 @@ class _Images:
         self.biassec = None
         self.trimsec = None
         self.prefix = None
-        # Define various named constants
-        self.BIN11 = '1 1'
-        self.BIN22 = '2 2'
-        self.BIN33 = '3 3'
-        self.BIN44 = '4 4'
+        self.bin_factor = None
+        # Generic filenames
+        self.zerofn = 'bias.fits'
 
     def copy_raw(self, overwrite=False):
         """Copy raw FITS files to subdirectory 'raw' for safekeeping.
@@ -104,33 +103,44 @@ class _Images:
                 print(f'Copying {img} to {raw_data}...')
                 shutil.copy2(img, raw_data)
 
-    def biascombine(self, binning=None, output="Bias.fits"):
+    def _biascombine(self, binning=None, output="bias.fits"):
         """Finds and combines bias frames with the indicated binning
 
         :param binning:
         :param output:
         :return:
         """
-        # First, build the file collection
-        file_cl = ccdp.ImageFileCollection(self.path,
-                                           glob_include=self.prefix + '.*.fits')
+        if binning is None:
+            raise
+        if self.debug:
+            print(binning, output)
+
+        # First, build the file collection of images to be trimmed
+        file_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*.fits')
         # Loop through files,
         for ccd, file_name in file_cl.ccds(ccdsum=binning, bitpix=16,
                                            imagetyp='bias', return_fname=True):
-            # Construct the name of the trimmed file
-            trim_name = '{0}t{1}'.format(file_name[:-5], file_name[-5:])
+
+            # Check for empty trimsec/biassec attributes, pull from header
+            if self.biassec is None:
+                self.biassec = ccd.meta['biassec']
+            if self.trimsec is None:
+                self.trimsec = ccd.meta['trimsec']
+
             # Fit the overscan section, subtract it, then trim the image
-            ccd = trim_oscan(ccd, self.biassec, self.trimsec)
-            # Save the result
-            ccd.write(trim_name, overwrite=True)
-            # Delete the input file to save space
+            ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
+
+            # Save the result; delete the input file
+            ccd.write(f'{file_name[:-5]}t{file_name[-5:]}', overwrite=True)
             os.remove(file_name)
 
         # Collect the trimmed biases
-        t_bias_cl = ccdp.ImageFileCollection(self.path, glob_include='*t.fits')
+        t_bias_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '*t.fits')
 
         # If we have a fresh list of trimmed biases to work with...
-        if len(t_bias_cl.files) != 0:
+        if t_bias_cl.files:
 
             if self.debug:
                 print(f"Combining bias frames with binning {binning}...")
@@ -148,13 +158,115 @@ class _Images:
             for f in t_bias_cl.files:
                 os.remove(f)
 
+    def _biassubtract(self, binning=None):
+        """
+
+        :param binning:
+        :return:
+        """
+        if binning is None:
+            raise
+
+        # First, build the file collection of images to be trimmed
+        file_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*.fits')
+
+        # Load the appropriate bias frame to subtract
+        if not os.path.isfile(self.zerofn):
+            self.biascombine()
+        combined_bias = CCDData.read(self.zerofn)
+
+        # Loop through files,
+        for ccd, file_name in file_cl.ccds(ccdsum=binning, bitpix=16,
+                                           return_fname=True):
+            if self.debug:
+                print(file_name, ccd.header['NAXIS2'], ccd.header['NAXIS1'])
+
+            # Check for empty trimsec/biassec attributes, pull from header
+            if self.biassec is None:
+                self.biassec = ccd.meta['biassec']
+            if self.trimsec is None:
+                self.trimsec = ccd.meta['trimsec']
+
+            # Fit the overscan section, subtract it, then trim the image
+            ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
+
+            # Subtract master bias
+            ccd = ccdp.subtract_bias(ccd, combined_bias)
+
+            # Save the result; delete input file
+            ccd.write(f'{file_name[:-5]}b{file_name[-5:]}', overwrite=True)
+            os.remove(file_name)
+
+    def _flatcombine(self, binning=None, outbase='flat_'):
+        """Finds and combines bias frames with the indicated binning
+
+        :param binning:
+        :return:
+        """
+        if binning is None:
+            raise
+        if self.debug:
+            print(binning)
+
+        # Load the list of bias-subtracted data frames
+        bsub_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*b.fits')
+
+        # Normalize flat field images by the mean value
+        for flat_type in ['sky flat', 'dome flat']:
+            for ccd, flat_fn in bsub_cl.ccds(ccdsum=binning, imagetyp=flat_type,
+                                             return_fname=True):
+                # Perform the division
+                ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
+
+                # Write out the file to a '*n.fits'; delete input file
+                ccd.write(f'{flat_fn[:-6]}n{flat_fn[-5:]}', overwrite=True)
+                os.remove(flat_fn)
+
+        # Load the list of normalized flat field images
+        norm_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*n.fits')
+        if norm_cl.files:
+
+            # List the collection of filters found in this set
+            filters = list(norm_cl.summary['filters'])
+
+            # Determine unique, and produce a list to iterate on
+            unique_filters = list(set(filters))
+
+            # Combine for each filt in unique_filters
+            for filt in unique_filters:
+
+                flats = norm_cl.files_filtered(filters=filt,
+                                               include_path=True)
+
+                print(f"Combining flats for filter {filt}...")
+                combined_flat = ccdp.combine(flats, method='median',
+                                             sigma_clip=True,
+                                             sigma_clip_low_thresh=5,
+                                             sigma_clip_high_thresh=5,
+                                             sigma_clip_func=np.ma.median,
+                                             sigma_clip_dev_func=mad_std,
+                                             mem_limit=4e9)
+                # Make a filename to save, save, remove input files
+                flat_fn = outbase + filt + '.fits'
+                if self.debug:
+                    print(f'Saving combined flat as {flat_fn}')
+                combined_flat.write(flat_fn, overwrite=True)
+                for fn in flats:
+                    os.remove(fn)
+
+        else:
+            print("No flats to be combined.")
+
 
 class LMI(_Images):
     """Class call for a folder of LMI data to be reduced.
 
     """
 
-    def __init__(self, path, biassec=None, trimsec=None):
+    def __init__(self, path, biassec=None, trimsec=None, bin_factor=2):
         """__init__: Initialize LMI class.
         Args:
             path (:TYPE:`str`)
@@ -167,22 +279,90 @@ class LMI(_Images):
                 If unspecified, use the values suggested in the LMI User Manual.
         """
         _Images.__init__(self, path)
-        # Set the BIASSEC and TRIMSEC appropriately
-        if biassec is None:
-            self.biassec = '[3100:3124, 3:3079]'
+        self.bin_factor = int(bin_factor)
+        self.binning = f'{self.bin_factor} {self.bin_factor}'
+
+        # Set the BIASSEC and TRIMSEC appropriately FOR 2x2 BINNING
+        if self.bin_factor == 2:
+            self.biassec = '[3100:3124, 3:3079]' if biassec is None else biassec
+            self.trimsec = '[30:3094,   3:3079]' if trimsec is None else trimsec
         else:
             self.biassec = biassec
-        if trimsec is None:
-            self.trimsec = '[30:3094,   3:3079]'
-        else:
             self.trimsec = trimsec
+
         # File prefix
         self.prefix = 'lmi'
         # Define standard filenames
-        self.ZEROFN1 = 'Zero_1x1.fits'
-        self.ZEROFN2 = 'Zero_2x2.fits'
-        self.ZEROFN3 = 'Zero_3x3.fits'
-        self.ZEROFN4 = 'Zero_4x4.fits'
+        self.zerofn = f'bias_bin{self.bin_factor}.fits'
+
+    def bias_combine(self):
+        """
+
+        :return:
+        """
+        self._biascombine(self.binning, output=self.zerofn)
+
+    def bias_subtract(self):
+        """
+
+        :return:
+        """
+        self._biassubtract(self.binning)
+
+    def flat_combine(self):
+        """
+
+        :return:
+        """
+        self._flatcombine(self.binning, outbase=f'flat_bin{self.bin_factor}_')
+
+    def divide_flat(self):
+        """Divides all LMI science frames by the appropriate flat field image
+        This method is LMI-specific, rather than being wrapper for a more
+        general function.
+        :return:
+        """
+
+        # Load the list of master flats and bias-subtracted data frames
+        flat_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=f'flat_bin{self.bin_factor}_*.fits')
+        sci_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '*b.fits')
+
+        # Check to be sure there are, indeed, flats...
+        if flat_cl.files:
+            # Loop through the filters present
+            for filt in list(flat_cl.summary['filters']):
+
+                if self.debug:
+                    print(f'Dividing by master flat for filter: {filt}')
+                master_flat = next(
+                    flat_cl.ccds(ccdsum=self.binning, filters=filt))
+
+                # Loop through the science frames to correct
+                for ccd, sci_fn in sci_cl.ccds(ccdsum=self.binning,
+                                               filters=filt,
+                                               return_fname=True):
+
+                    if self.debug:
+                        print(f'Flat correcting file {sci_fn}')
+                    # Divide by master flat, add keyword 'FLATCOR'
+                    ccdp.flat_correct(ccd, master_flat, add_keyword=True)
+                    ccd.meta['flatcor'] = True
+
+                    # Write out the file to a '*f.fits', remove input file
+                    ccd.write(f'{sci_fn[:-6]}f{sci_fn[-5:]}', overwrite=True)
+                    os.remove(sci_fn)
+
+    def process_all(self):
+        """
+
+        :return:
+        """
+        self.bias_combine()
+        self.bias_subtract()
+        self.flat_combine()
+        self.divide_flat()
 
 
 class DeVeny(_Images):
@@ -204,16 +384,11 @@ class DeVeny(_Images):
         """
         _Images.__init__(self, path)
         # Set the BIASSEC and TRIMSEC appropriately
-        if biassec is None:
-            self.biassec = '[2101:2144,5:512]'
-        else:
-            self.biassec = biassec
-        if trimsec is None:
-            self.trimsec = '[54:  2096,5:512]'
-        else:
-            self.trimsec = trimsec
-        # Define standard filenames
-        self.ZEROFN = 'Zero.fits'
+        self.biassec = '[2101:2144,5:512]' if biassec is None else biassec
+        self.trimsec = '[54:  2096,5:512]' if trimsec is None else trimsec
+
+        self.bin_factor = 1
+        self.prefix = None  # Make this something
 
 
 def function1(arg1, debug=True):
@@ -238,7 +413,7 @@ def function1(arg1, debug=True):
     return arg1
 
 
-def trim_oscan(ccd, biassec, trimsec, model=None):
+def _trim_oscan(ccd, biassec, trimsec, model=None):
     """Subtract the overscan region and trim image to desired size.
     The CCDPROC function subtract_overscan() expects the TRIMSEC of the image
     (the part you want to keep) to span the entirety of one dimension, with the
@@ -268,7 +443,7 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
     yt, xt = slice_from_string(trimsec, fits_convention=True)
 
     # First trim off the top & bottom rows
-    ccd = ccdp.trim_image(ccd[yt.start:yt.stop, :])
+    ccd = ccdp.trim_image(ccd[yt.start:yt.stop, :], add_keyword=True)
 
     # Model & Subtract the overscan
     if model is None:
@@ -276,10 +451,10 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
     else:
         model = models.Chebyshev1D(1)  # Figure out how to incorporate others
     ccd = ccdp.subtract_overscan(ccd, overscan=ccd[:, xb.start:xb.stop],
-                                 median=True, model=model)
+                                 median=True, model=model, add_keyword=True)
 
     # Trim the overscan & return
-    return ccdp.trim_image(ccd[:, xt.start:xt.stop])
+    return ccdp.trim_image(ccd[:, xt.start:xt.stop], add_keyword=True)
 
 
 def main():
