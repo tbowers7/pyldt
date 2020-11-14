@@ -134,7 +134,7 @@ class _Images:
 
             # Update the header
             ccd.header['HISTORY'] = 'Trimmed bias saved: ' + \
-                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT '
+                                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT '
             ccd.header['HISTORY'] = f'Original filename: {file_name}'
 
             # Save the result; delete the input file
@@ -161,7 +161,7 @@ class _Images:
             # Add FITS keyword BIASCOMB and add HISTORY
             combined_bias.header['biascomb'] = True
             combined_bias.header['HISTORY'] = 'Combined bias created: ' + \
-                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                                              f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
             for f in t_bias_cl.files:
                 combined_bias.header['HISTORY'] = f
 
@@ -213,7 +213,7 @@ class _Images:
 
             # Update the header
             ccd.header['HISTORY'] = 'Bias-subtracted image saved: ' + \
-                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
             ccd.header['HISTORY'] = f'Subtracted bias: {self.zerofn}'
             ccd.header['HISTORY'] = f'Original filename: {file_name}'
 
@@ -290,7 +290,7 @@ class LMI(_Images):
 
                 # Update the header
                 ccd.header['HISTORY'] = 'Normalized flat saved: ' + \
-                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                                        f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
                 ccd.header['HISTORY'] = f'Previous filename: {flat_fn}'
 
                 # Write out the file to a '*n.fits'; delete input file
@@ -323,10 +323,10 @@ class LMI(_Images):
                                              sigma_clip_dev_func=mad_std,
                                              mem_limit=4e9)
 
-                # Add FITS keyword BIASCOMB and add HISTORY
+                # Add FITS keyword FLATCOMB and add HISTORY
                 combined_flat.header['flatcomb'] = True
                 combined_flat.header['HISTORY'] = 'Combined flat created: ' + \
-                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                                                  f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
                 for fn in flats:
                     combined_flat.header['HISTORY'] = fn
 
@@ -379,7 +379,7 @@ class LMI(_Images):
                     # Update the header
                     ccd.header['flatcor'] = True
                     ccd.header['HISTORY'] = 'Flat-corrected image saved: ' + \
-                        f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                                            f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
                     ccd.header['HISTORY'] = f'Divided by flat: {mflat_fn}'
                     ccd.header['HISTORY'] = f'Previous filename: {sci_fn}'
 
@@ -404,7 +404,8 @@ class DeVeny(_Images):
 
     """
 
-    def __init__(self, path, biassec=None, trimsec=None, prefix=None):
+    def __init__(self, path, biassec=None, trimsec=None, prefix=None,
+                 multilamp=False):
         """__init__: Initialize DeVeny class.
         Args:
            path (:TYPE:`str`)
@@ -419,6 +420,7 @@ class DeVeny(_Images):
         _Images.__init__(self, path)
         self.bin_factor = 1
         self.binning = f'{self.bin_factor} {self.bin_factor}'
+        self.multilamp = multilamp
 
         # Set the BIASSEC and TRIMSEC appropriately
         self.biassec = '[2101:2144,5:512]' if biassec is None else biassec
@@ -436,6 +438,18 @@ class DeVeny(_Images):
         print(self.prefix)
         # Define standard filenames
         self.zerofn = 'bias.fits'
+
+        # Define the gratings
+        self.DV1 = "150/5000"
+        self.DV2 = "300/4000"
+        self.DV3 = "300/6750"
+        self.DV4 = "400/8500"
+        self.DV5 = "500/5500"
+        self.DV6 = "600/4900"
+        self.DV7 = "600/6750"
+        self.DV8 = "831/8000"
+        self.DV9 = "1200/5000"
+        self.DV10 = "2160/5000"
 
     def bias_combine(self):
         """
@@ -456,7 +470,124 @@ class DeVeny(_Images):
 
         :return:
         """
-        pass
+        if self.debug:
+            print("Combining flats...")
+
+        # Load the list of bias-subtracted data frames
+        bsub_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*b.fits')
+
+        # Find just the flats
+        flats_cl = bsub_cl.filter(imagetyp="dome flat")
+
+        # Check that we have any
+        if flats_cl.files:
+
+            # Determine which grating(s) are included in this directory
+            gratings = list(set(list(flats_cl.summary['grating'])))
+
+            # In case more than one grating was used (unlikely except engineering)
+            for g in gratings:
+
+                grname = None
+                if g == self.DV1:
+                    grname = 'DV1'
+                elif g == self.DV2:
+                    grname = 'DV2'
+                elif g == self.DV3:
+                    grname = 'DV3'
+                elif g == self.DV4:
+                    grname = 'DV4'
+                elif g == self.DV5:
+                    grname = 'DV5'
+                elif g == self.DV6:
+                    grname = 'DV6'
+                elif g == self.DV7:
+                    grname = 'DV7'
+                elif g == self.DV8:
+                    grname = 'DV8'
+                elif g == self.DV9:
+                    grname = 'DV9'
+                elif g == self.DV10:
+                    grname = 'DV10'
+
+                # Filter the ImageFileCollection to include only this grating
+                gr_cl = flats_cl.filter(grating=g)
+
+                # Determine which grating tilt angles were used
+                grangles = list(set(list(gr_cl.summary['grangle'])))
+
+                # In case more than one grating tilt angle was used (possible)
+                for gra in grangles:
+
+                    # Filter the ImageFileCollection to include only this tilt
+                    gra_cl = gr_cl.filter(grangle=gra)
+
+                    # Determine which order-blocking filters were used
+                    filtrears = list(set(list(gra_cl.summary['filtrear'])))
+
+                    # In case more than one order-blocking filter was used (???)
+                    for filt in filtrears:
+
+                        # Filter the ImageFileCollection to include only this filter
+                        filt_cl = gra_cl.filter(filtrear=filt)
+
+                        # For engineering, possible use different lamps for comp
+                        if self.multilamp:
+                            lamps = list(set(list(filt_cl.summary['comment'])))
+                        else:
+                            lamps = []
+
+                        print(lamps)
+
+                        for lamp in lamps:
+
+                            if self.multilamp:
+                                lamp_cl = filt_cl.filter(comment=lamp)
+                                if lamp[0:3] == 'Top':
+                                    lname = '_TRING'
+                                else:
+                                    lname = '_FLOOD'
+                            else:
+                                lamp_cl = filt.cl
+                                lname = ''
+
+                            comb_flat = ccdp.combine(lamp_cl.files,
+                                                     method='median',
+                                                     sigma_clip=True,
+                                                     sigma_clip_low_thresh=5,
+                                                     sigma_clip_high_thresh=5,
+                                                     sigma_clip_func=np.ma.median,
+                                                     sigma_clip_dev_func=mad_std,
+                                                     mem_limit=4e9)
+
+                            # Add FITS keyword FLATCOMB and add HISTORY
+                            comb_flat.header['flatcomb'] = True
+                            comb_flat.header[
+                                'HISTORY'] = 'Combined flat created: ' + \
+                                             f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                            for fn in lamp_cl.files:
+                                comb_flat.header['HISTORY'] = fn
+
+                            # Make a filename to save, save, remove input files
+                            flat_fn = f'flat_{grname}_{gra}_{filt}{lname}.fits'
+                            if self.debug:
+                                print(f'Saving combined flat as {flat_fn}')
+                            comb_flat.write(flat_fn, overwrite=True)
+                            for fn in lamp_cl.files:
+                                os.remove(fn)
+        else:
+            print("No flats to be combined.")
+
+    def process_all(self):
+        """
+
+        :return:
+        """
+        self.copy_raw()
+        self.bias_combine()
+        self.bias_subtract()
+        self.flat_combine()
 
 
 def _trim_oscan(ccd, biassec, trimsec, model=None):
