@@ -36,6 +36,7 @@ software of your choosing.
 
 # Built-In Libraries
 from __future__ import division, print_function, absolute_import
+from datetime import datetime
 import glob
 import os
 from pathlib import Path
@@ -124,12 +125,17 @@ class _Images:
 
             # Check for empty trimsec/biassec attributes, pull from header
             if self.biassec is None:
-                self.biassec = ccd.meta['biassec']
+                self.biassec = ccd.header['biassec']
             if self.trimsec is None:
-                self.trimsec = ccd.meta['trimsec']
+                self.trimsec = ccd.header['trimsec']
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
+
+            # Update the header
+            ccd.header['HISTORY'] = 'Trimmed bias saved: ' + \
+                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT '
+            ccd.header['HISTORY'] = f'Original filename: {file_name}'
 
             # Save the result; delete the input file
             ccd.write(f'{file_name[:-5]}t{file_name[-5:]}', overwrite=True)
@@ -151,10 +157,16 @@ class _Images:
                                          sigma_clip_func=np.ma.median,
                                          sigma_clip_dev_func=mad_std,
                                          mem_limit=4e9)
-            # Add FITS keyword BIASCOMB
-            combined_bias.meta['biascomb'] = True
+
+            # Add FITS keyword BIASCOMB and add HISTORY
+            combined_bias.header['biascomb'] = True
+            combined_bias.header['HISTORY'] = 'Combined bias created: ' + \
+                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+            for f in t_bias_cl.files:
+                combined_bias.header['HISTORY'] = f
+
+            # Save the result; delete the input files
             combined_bias.write(output, overwrite=True)
-            # Delete input files to save space
             for f in t_bias_cl.files:
                 os.remove(f)
 
@@ -184,9 +196,9 @@ class _Images:
 
             # Check for empty trimsec/biassec attributes, pull from header
             if self.biassec is None:
-                self.biassec = ccd.meta['biassec']
+                self.biassec = ccd.header['biassec']
             if self.trimsec is None:
-                self.trimsec = ccd.meta['trimsec']
+                self.trimsec = ccd.header['trimsec']
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
@@ -199,71 +211,15 @@ class _Images:
                 if len(ccd.header['filtrear']) == 9:
                     ccd.header['filtrear'] = ccd.header['filtrear'][0:5]
 
+            # Update the header
+            ccd.header['HISTORY'] = 'Bias-subtracted image saved: ' + \
+                f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+            ccd.header['HISTORY'] = f'Subtracted bias: {self.zerofn}'
+            ccd.header['HISTORY'] = f'Original filename: {file_name}'
+
             # Save the result; delete input file
             ccd.write(f'{file_name[:-5]}b{file_name[-5:]}', overwrite=True)
             os.remove(file_name)
-
-    def _flatcombine(self, binning=None, outbase='flat_'):
-        """Finds and combines bias frames with the indicated binning
-
-        :param binning:
-        :return:
-        """
-        if binning is None:
-            raise
-        if self.debug:
-            print(binning)
-
-        # Load the list of bias-subtracted data frames
-        bsub_cl = ccdp.ImageFileCollection(
-            self.path, glob_include=self.prefix + '.*b.fits')
-
-        # Normalize flat field images by the mean value
-        for flat_type in ['sky flat', 'dome flat']:
-            for ccd, flat_fn in bsub_cl.ccds(ccdsum=binning, imagetyp=flat_type,
-                                             return_fname=True):
-                # Perform the division
-                ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
-
-                # Write out the file to a '*n.fits'; delete input file
-                ccd.write(f'{flat_fn[:-6]}n{flat_fn[-5:]}', overwrite=True)
-                os.remove(flat_fn)
-
-        # Load the list of normalized flat field images
-        norm_cl = ccdp.ImageFileCollection(
-            self.path, glob_include=self.prefix + '.*n.fits')
-        if norm_cl.files:
-
-            # List the collection of filters found in this set
-            filters = list(norm_cl.summary['filters'])
-
-            # Determine unique, and produce a list to iterate on
-            unique_filters = list(set(filters))
-
-            # Combine for each filt in unique_filters
-            for filt in unique_filters:
-
-                flats = norm_cl.files_filtered(filters=filt,
-                                               include_path=True)
-
-                print(f"Combining flats for filter {filt}...")
-                combined_flat = ccdp.combine(flats, method='median',
-                                             sigma_clip=True,
-                                             sigma_clip_low_thresh=5,
-                                             sigma_clip_high_thresh=5,
-                                             sigma_clip_func=np.ma.median,
-                                             sigma_clip_dev_func=mad_std,
-                                             mem_limit=4e9)
-                # Make a filename to save, save, remove input files
-                flat_fn = outbase + filt + '.fits'
-                if self.debug:
-                    print(f'Saving combined flat as {flat_fn}')
-                combined_flat.write(flat_fn, overwrite=True)
-                for fn in flats:
-                    os.remove(fn)
-
-        else:
-            print("No flats to be combined.")
 
 
 class LMI(_Images):
@@ -315,11 +271,75 @@ class LMI(_Images):
         self._biassubtract(self.binning)
 
     def flat_combine(self):
-        """
+        """Finds and combines flat frames with the indicated binning
 
         :return:
         """
-        self._flatcombine(self.binning, outbase=f'flat_bin{self.bin_factor}_')
+
+        # Load the list of bias-subtracted data frames
+        bsub_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*b.fits')
+
+        # Normalize flat field images by the mean value
+        for flat_type in ['sky flat', 'dome flat']:
+            for ccd, flat_fn in bsub_cl.ccds(ccdsum=self.binning,
+                                             imagetyp=flat_type,
+                                             return_fname=True):
+                # Perform the division
+                ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
+
+                # Update the header
+                ccd.header['HISTORY'] = 'Normalized flat saved: ' + \
+                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                ccd.header['HISTORY'] = f'Previous filename: {flat_fn}'
+
+                # Write out the file to a '*n.fits'; delete input file
+                ccd.write(f'{flat_fn[:-6]}n{flat_fn[-5:]}', overwrite=True)
+                os.remove(flat_fn)
+
+        # Load the list of normalized flat field images
+        norm_cl = ccdp.ImageFileCollection(
+            self.path, glob_include=self.prefix + '.*n.fits')
+        if norm_cl.files:
+
+            # List the collection of filters found in this set
+            filters = list(norm_cl.summary['filters'])
+
+            # Determine unique, and produce a list to iterate on
+            unique_filters = list(set(filters))
+
+            # Combine for each filt in unique_filters
+            for filt in unique_filters:
+
+                flats = norm_cl.files_filtered(filters=filt,
+                                               include_path=True)
+
+                print(f"Combining flats for filter {filt}...")
+                combined_flat = ccdp.combine(flats, method='median',
+                                             sigma_clip=True,
+                                             sigma_clip_low_thresh=5,
+                                             sigma_clip_high_thresh=5,
+                                             sigma_clip_func=np.ma.median,
+                                             sigma_clip_dev_func=mad_std,
+                                             mem_limit=4e9)
+
+                # Add FITS keyword BIASCOMB and add HISTORY
+                combined_flat.header['flatcomb'] = True
+                combined_flat.header['HISTORY'] = 'Combined flat created: ' + \
+                    f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                for fn in flats:
+                    combined_flat.header['HISTORY'] = fn
+
+                # Make a filename to save, save, remove input files
+                flat_fn = f'flat_bin{self.bin_factor}_{filt}.fits'
+                if self.debug:
+                    print(f'Saving combined flat as {flat_fn}')
+                combined_flat.write(flat_fn, overwrite=True)
+                for fn in flats:
+                    os.remove(fn)
+
+        else:
+            print("No flats to be combined.")
 
     def divide_flat(self):
         """Divides all LMI science frames by the appropriate flat field image
@@ -341,8 +361,9 @@ class LMI(_Images):
 
                 if self.debug:
                     print(f'Dividing by master flat for filter: {filt}')
-                master_flat = next(
-                    flat_cl.ccds(ccdsum=self.binning, filters=filt))
+                master_flat, mflat_fn = next(
+                    flat_cl.ccds(ccdsum=self.binning, filters=filt,
+                                 return_fname=True))
 
                 # Loop through the science frames to correct
                 for ccd, sci_fn in sci_cl.ccds(ccdsum=self.binning,
@@ -351,9 +372,16 @@ class LMI(_Images):
 
                     if self.debug:
                         print(f'Flat correcting file {sci_fn}')
-                    # Divide by master flat, add keyword 'FLATCOR'
+
+                    # Divide by master flat
                     ccdp.flat_correct(ccd, master_flat, add_keyword=True)
-                    ccd.meta['flatcor'] = True
+
+                    # Update the header
+                    ccd.header['flatcor'] = True
+                    ccd.header['HISTORY'] = 'Flat-corrected image saved: ' + \
+                        f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+                    ccd.header['HISTORY'] = f'Divided by flat: {mflat_fn}'
+                    ccd.header['HISTORY'] = f'Previous filename: {sci_fn}'
 
                     # Write out the file to a '*f.fits', remove input file
                     ccd.write(f'{sci_fn[:-6]}f{sci_fn[-5:]}', overwrite=True)
@@ -428,7 +456,7 @@ class DeVeny(_Images):
 
         :return:
         """
-        self._flatcombine(self.binning, outbase=f'flat_bin{self.bin_factor}_')
+        pass
 
 
 def _trim_oscan(ccd, biassec, trimsec, model=None):
