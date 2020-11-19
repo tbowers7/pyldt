@@ -54,6 +54,9 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
+# Intrapackage
+from .utils import *
+
 
 class _Images:
     """Internal class, parent of LMI & DeVeny."""
@@ -632,6 +635,62 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
 
     # Trim the overscan & return
     return ccdp.trim_image(ccd[:, xt.start:xt.stop], add_keyword=True)
+
+
+def imcombine(files, del_input=False, median=False, mean=False, printstat=True):
+    """
+
+    :param files:
+    :param del_input:
+    :param median:
+    :param mean:
+    :return:
+    """
+
+    # Check for proper file list
+    if len(files) < 3:
+        print("Script requires start and stop image #s to combine.")
+        raise Exception()
+    for f in files:
+        if not os.path.isfile(f):
+            raise Exception()
+
+    # Determine combine method
+    if median is True:
+        combmethod = 'median'
+    elif mean is True:
+        combmethod = 'mean'
+    else:
+        combmethod = 'median'
+
+    # Let's get combining!
+    file_cl = ccdp.ImageFileCollection(filenames=files)
+
+    if printstat:
+        # Print out the statistics, for clarity
+        for img, fn in file_cl.ccds(return_fname=True):
+            mini, maxi, mean, stdv = mmms(img)
+            print(
+                f'{fn} Min: {mini:.2f} Max: {maxi:.2f} Mean: {mean:.2f} Stddev: {stdv:.2f}')
+
+    comb_img = ccdp.combine(file_cl.files, method=combmethod, sigma_clip=True,
+                            sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,
+                            sigma_clip_func=np.ma.median,
+                            sigma_clip_dev_func=mad_std, mem_limit=4e9)
+
+    comb_fn = f'{files[0][:-5]}_comb{files[0][-5:]}'
+
+    comb_img.header['combined'] = True
+    comb_img.header['n_comb'] = len(file_cl.files)
+    for i, fn in enumerate(file_cl.files):
+        comb_img.header[f'comb{i + 1:04}'] = fn
+
+    comb_img.write(comb_fn, overwrite=True)
+
+    if del_input:
+        for f in files:
+            os.remove(f)
+    pass
 
 
 def main():
