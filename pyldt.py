@@ -82,6 +82,7 @@ class _ImageDirectory:
         self.prefix = None
         self.bin_factor = None
         self.binning = None
+        self.gratings = None
         # Generic filenames
         self.zerofn = 'bias.fits'
         # Create Placeholder for initial ImageFileCollection for the directory
@@ -100,6 +101,11 @@ class _ImageDirectory:
         if self.debug:
             print(f'Binning is: {binning}')
 
+        if deveny:
+            # Break out key/value lists for gratings
+            grating_ids = list(self.gratings.keys())
+            grating_kwds = list(self.gratings.values())
+
         # Refresh the ImageFileCollection
         self._file_cl.refresh()
 
@@ -111,10 +117,14 @@ class _ImageDirectory:
             if self.trimsec is None:
                 self.trimsec = ccd.header['trimsec']
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
+            #   Also, create GRAT_ID keyword containing DVx grating ID
             if deveny:
                 if len(ccd.header['filtrear']) == 9:
                     ccd.header['filtrear'] = ccd.header['filtrear'][0:5]
-                    ccd.write(f'{self.path}/{fname}', overwrite=True)
+                grname = grating_ids[grating_kwds.index(ccd.header['grating'])]
+                ccd.header.set('grat_id', grname, 'Grating ID Name',
+                               after='grating')
+                ccd.write(f'{self.path}/{fname}', overwrite=True)
 
     def copy_raw(self, overwrite=False):
         """Copy raw FITS files to subdirectory 'raw' for safekeeping.
@@ -487,7 +497,8 @@ class DeVeny(_ImageDirectory):
                          "DV7": "600/6750",
                          "DV8": "831/8000",
                          "DV9": "1200/5000",
-                         "DV10": "2160/5000"}
+                         "DV10": "2160/5000",
+                         "DVxx": "UNKNOWN"}
 
         self._file_cl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
@@ -548,18 +559,11 @@ class DeVeny(_ImageDirectory):
         # Check that we have any
         if flats_cl.files:
 
-            # Break out key/value lists for gratings
-            grating_ids = list(self.gratings.keys())
-            grating_fits = list(self.gratings.values())
-
             # In case more than one grating was used (unlikely except eng)
-            for g in list(set(list(flats_cl.summary['grating']))):
-
-                # Extract the grating ID from FITS keyword GRATING
-                grname = grating_ids[grating_fits.index(g)]
+            for grname in list(set(list(flats_cl.summary['grat_id']))):
 
                 # Filter the ImgFileColl to include only this grating
-                gr_cl = flats_cl.filter(grating=g)
+                gr_cl = flats_cl.filter(grat_id=grname)
 
                 # In case more than one grating tilt angle was used (possible)
                 for gra in list(set(list(gr_cl.summary['grangle']))):
