@@ -67,8 +67,6 @@ class _ImageDirectory:
         """
         # Settings that determine how the class functions
         self.debug = debug
-        if self.debug:
-            print(self.path)
         # Unless specified, suppress AstroPy warnings
         if not show_warnings:
             warnings.simplefilter('ignore', AstropyWarning)
@@ -76,6 +74,8 @@ class _ImageDirectory:
 
         # Metadata related to all files in this directory
         self.path = path
+        if self.debug:
+            print(self.path)
         # Attributes that need to be specified for the instrument
         self.biassec = None
         self.trimsec = None
