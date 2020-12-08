@@ -630,61 +630,84 @@ class DeVeny(_ImageDirectory):
             print("No flats to be combined.")
 
 
-def imcombine(files, del_input=False, median=False, mean=False, printstat=True):
+# Non-class function definitions
+def imcombine(*files, inlist=None, outfn=None, del_input=False, combine=None,
+              printstat=True):
     """Combine a collection of images
-
-    :param files:
-    :param del_input:
-    :param median:
-    :param mean:
-    :param printstat:
+    This function (crudely) emulates the IRAF imcombine function.  Pass in a
+    list of images to be combined, and the result is written to disk with an
+    optionally specified output filename.
+    :param files: `list`: List of filenames to combine
+    :param inlist: `str`: Filename of text file listing images to be combined
+    :param outfn: `str`: Filename to write combined image.  Default: append
+                         '_comb' to first filename in the input list.
+    :param del_input: `bool`: Delete the input files after combination.
+                              Default: `false`
+    :param combine: `str`: Combine method.  'median' (default), or 'mean'
+    :param printstat: `bool`: Print image statistics to screen
     :return: None
     """
 
+    # Check for inputs
+    if len(files) > 0 and inlist is not None:
+        print("Only one of files or inlist may be specified, not both.")
+        raise Exception()
+
+    # Read in the text list inlist, if specified
+    if inlist is not None:
+        with open(inlist, 'r') as f:
+            files = []
+            for line in f:
+                files.append(line.rstrip())
+
     # Check for proper file list
     if len(files) < 3:
-        print("Script requires start and stop image #s to combine.")
+        print("Combination requires at least three input images.")
         raise Exception()
+
+    # Check that specified input files exist
     for f in files:
         if not os.path.isfile(f):
+            print(f"File {f} does not exist.")
             raise Exception()
 
-    # Determine combine method
-    if median is True:
-        combmethod = 'median'
-    elif mean is True:
-        combmethod = 'mean'
-    else:
-        combmethod = 'median'
+    # Determine combine method (default = 'median')
+    if combine != 'median' or combine != 'mean':
+        combine = 'median'
 
-    # Let's get combining!
+    # Create an ImgFileColl using the input files
     file_cl = ccdp.ImageFileCollection(filenames=files)
 
     if printstat:
         # Print out the statistics, for clarity
         for img, fn in file_cl.ccds(return_fname=True):
             mini, maxi, mean, stdv = mmms(img)
-            print(f'{fn} Min: {mini:.2f} Max: {maxi:.2f} ' +
+            print(f'{fn}:: Min: {mini:.2f} Max: {maxi:.2f} ' +
                   f'Mean: {mean:.2f} Stddev: {stdv:.2f}')
 
-    comb_img = ccdp.combine(file_cl.files, method=combmethod, sigma_clip=True,
-                            sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,
+    comb_img = ccdp.combine(file_cl.files,
+                            method=combine,
+                            sigma_clip=True,
+                            sigma_clip_low_thresh=5,
+                            sigma_clip_high_thresh=5,
                             sigma_clip_func=np.ma.median,
-                            sigma_clip_dev_func=mad_std, mem_limit=4e9)
+                            sigma_clip_dev_func=mad_std,
+                            mem_limit=4e9)
 
-    comb_fn = f'{files[0][:-5]}_comb{files[0][-5:]}'
-
+    # Add FITS keyword COMBINED and add HISTORY
     comb_img.header['combined'] = True
-    comb_img.header['n_comb'] = len(file_cl.files)
-    for i, fn in enumerate(file_cl.files):
-        comb_img.header[f'comb{i + 1:04}'] = fn
+    comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
+    for fn in file_cl.files:
+        comb_img.header['HISTORY'] = fn
 
-    comb_img.write(f'{comb_fn}', overwrite=True)
-
+    # Build filename (if not specified in call), save, remove input files
+    if outfn is None:
+        outfn = f'{files[0][:-5]}_comb{files[0][-5:]}'
+    print(f'Saving combined image as {outfn}')
+    comb_img.write(f'{outfn}', overwrite=True)
     if del_input:
         for f in files:
             os.remove(f'{f}')
-    pass
 
 
 def _savetime():
