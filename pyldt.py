@@ -631,13 +631,13 @@ class DeVeny(_ImageDirectory):
 
 
 # Non-class function definitions
-def imcombine(*files, inlist=None, outfn=None, del_input=False, combine=None,
+def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
               printstat=True):
     """Combine a collection of images
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
     list of images to be combined, and the result is written to disk with an
     optionally specified output filename.
-    :param files: `list`: List of filenames to combine
+    :param infiles: `list`: List of filenames to combine
     :param inlist: `str`: Filename of text file listing images to be combined
     :param outfn: `str`: Filename to write combined image.  Default: append
                          '_comb' to first filename in the input list.
@@ -647,6 +647,12 @@ def imcombine(*files, inlist=None, outfn=None, del_input=False, combine=None,
     :param printstat: `bool`: Print image statistics to screen
     :return: None
     """
+
+    # Unpack the single-item tuple *infiles
+    if len(infiles) > 0:
+        files, = infiles
+    else:
+        files = []
 
     # Check for inputs
     if len(files) > 0 and inlist is not None:
@@ -661,6 +667,7 @@ def imcombine(*files, inlist=None, outfn=None, del_input=False, combine=None,
                 files.append(line.rstrip())
 
     # Check for proper file list
+    print(len(files), files, type(files))
     if len(files) < 3:
         print("Combination requires at least three input images.")
         raise Exception()
