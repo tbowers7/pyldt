@@ -372,7 +372,7 @@ class LMI(_ImageDirectory):
                                           _savetime()
                 for fn in flats:
                     # Remove the path portion of the filename for the HISTORY
-                    cflat.header['HISTORY'] = fn[fn.rfind('/')+1:]
+                    cflat.header['HISTORY'] = fn[fn.rfind('/') + 1:]
 
                 # Build filename, save, remove input files
                 flat_fn = f'flat_bin{self.bin_factor}_{filt}.fits'
@@ -609,7 +609,7 @@ class DeVeny(_ImageDirectory):
                                 # Note: These filenames have the path attached,
                                 #       via the .filter() method of ImgFileCol.
                                 # Include just the pathless filename.
-                                cflat.header['HISTORY'] = fn[fn.rfind('/')+1:]
+                                cflat.header['HISTORY'] = fn[fn.rfind('/') + 1:]
 
                             # Build filename, save, remove input files
                             flat_fn = f'flat_{grname}_{gra}_{filt}{lname}.fits'
