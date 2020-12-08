@@ -667,7 +667,6 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
                 files.append(line.rstrip())
 
     # Check for proper file list
-    print(len(files), files, type(files))
     if len(files) < 3:
         print("Combination requires at least three input images.")
         raise Exception()
