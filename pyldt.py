@@ -198,10 +198,13 @@ class _ImageDirectory:
                 sigma_clip_dev_func=mad_std,
                 mem_limit=4e9)
 
-            # Add FITS keyword BIASCOMB and add HISTORY
-            comb_bias.header['biascomb'] = True
+            # Add FITS keyword NCOMB and HISTORY
+            comb_bias.header.set('ncomb', len(t_bias_cl.files),
+                                 '# of input images in combination')
             comb_bias.header['HISTORY'] = 'Combined bias created: ' + \
                                           _savetime()
+            comb_bias.header['HISTORY'] = 'Median combined ' + \
+                                          f'{len(t_bias_cl.files)} files:'
 
             for f in t_bias_cl.files:
                 comb_bias.header['HISTORY'] = f
@@ -376,10 +379,13 @@ class LMI(_ImageDirectory):
                                      sigma_clip_dev_func=mad_std,
                                      mem_limit=4e9)
 
-                # Add FITS keyword FLATCOMB and add HISTORY
-                cflat.header['flatcomb'] = True
+                # Add FITS keyword NCOMB and HISTORY
+                cflat.header.set('ncomb', len(flats),
+                                 '# of input images in combination')
                 cflat.header['HISTORY'] = 'Combined flat created: ' + \
                                           _savetime()
+                cflat.header['HISTORY'] = 'Median combined ' + \
+                                          f'{len(flats)} files:'
                 for fn in flats:
                     # Remove the path portion of the filename for the HISTORY
                     cflat.header['HISTORY'] = fn[fn.rfind('/') + 1:]
@@ -605,10 +611,13 @@ class DeVeny(_ImageDirectory):
                                                  sigma_clip_dev_func=mad_std,
                                                  mem_limit=4e9)
 
-                            # Add FITS keyword FLATCOMB and add HISTORY
-                            cflat.header['flatcomb'] = True
+                            # Add FITS keyword NCOMB and HISTORY
+                            cflat.header.set('ncomb', len(lamp_cl.files),
+                                             '# of input images in combination')
                             cflat.header['HISTORY'] = 'Combined flat ' + \
                                                       'created: ' + _savetime()
+                            cflat.header['HISTORY'] = \
+                                f'Median combined {len(lamp_cl.files)} files:'
                             for fn in lamp_cl.files:
                                 # Note: These filenames have the path attached,
                                 #       via the .filter() method of ImgFileCol.
@@ -701,8 +710,11 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
                             mem_limit=4e9)
 
     # Add FITS keyword COMBINED and add HISTORY
-    comb_img.header['combined'] = True
+    comb_img.header.set('ncomb', len(file_cl.files),
+                        '# of input images in combination')
     comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
+    comb_img.header['HISTORY'] = f'{combine.title()} combined ' + \
+                                 f'{len(file_cl.files)} files:'
     for fn in file_cl.files:
         comb_img.header['HISTORY'] = fn
 
