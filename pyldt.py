@@ -280,6 +280,9 @@ class LMI(_ImageDirectory):
             trimsec (:TYPE:`str`)
                 The IRAF-style image region to be retained in each frame.
                 If unspecified, use the values suggested in the LMI User Manual.
+            bin_factor (:TYPE:`int`)
+                The binning factor used to create the image(s) to be processed.
+                [Default: 2]
         """
         _ImageDirectory.__init__(self, path)
         self.bin_factor = int(bin_factor)
@@ -650,7 +653,7 @@ class DeVeny(_ImageDirectory):
 
 # Non-class function definitions
 def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
-              printstat=True):
+              printstat=True, overwrite=True):
     """Combine a collection of images
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
     list of images to be combined, and the result is written to disk with an
@@ -663,6 +666,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
                               Default: `false`
     :param combine: `str`: Combine method.  'median' (default), or 'mean'
     :param printstat: `bool`: Print image statistics to screen
+    :param overwrite: `bool`: Overwrite the output file.  Default: True
     :return: None
     """
 
@@ -731,7 +735,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     if outfn is None:
         outfn = f'{files[0][:-5]}_comb{files[0][-5:]}'
     print(f'Saving combined image as {outfn}')
-    comb_img.write(f'{outfn}', overwrite=True)
+    comb_img.write(f'{outfn}', overwrite=overwrite)
     if del_input:
         for f in files:
             os.remove(f'{f}')
