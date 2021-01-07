@@ -748,6 +748,10 @@ def _savetime():
     return f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
 
 
+def trim_oscan(ccd, biassec, trimsec, model=None):
+    return _trim_oscan(ccd, biassec, trimsec, model=model)
+
+
 def _trim_oscan(ccd, biassec, trimsec, model=None):
     """Subtract the overscan region and trim image to desired size.
     The CCDPROC function subtract_overscan() expects the TRIMSEC of the image
