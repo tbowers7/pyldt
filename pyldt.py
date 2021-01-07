@@ -48,6 +48,15 @@ from ccdproc.utils.slices import slice_from_string
 # Intrapackage
 from .utils import *
 
+# Boilerplate variables
+__author__ = 'Timothy P. Ellsworth Bowers'
+__copyright__ = 'Copyright 2020'
+__credits__ = ['Lowell Observatory']
+__license__ = 'MPL-2.0'
+__version__ = '0.2.0'
+__email__ = 'tbowers@lowell.edu'
+__status__ = 'Development Status :: 2 - Pre-Alpha'
+
 
 class _ImageDirectory:
     """Internal class, parent of LMI & DeVeny.
