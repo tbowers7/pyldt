@@ -6,7 +6,7 @@
 #   License, v. 2.0. If a copy of the MPL was not distributed with this
 #   file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-#  Created on 26-Oct-2020
+#  Created on 26-Jan-2021
 #
 #  @author: tbowers
 
@@ -14,42 +14,38 @@
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
-The high-level image calibration routines in this module are designed for easy
-and simple-minded calibration of images from the LDT's facility instruments.
 
-These currently include the Large Monolithic Imager (LMI), and the DeVeny
-Optical Spectrograph (formerly the KPNO White Spectrograph).
-
-The top-level classes take in a directory of data and can process them using
-class methods to produce calibrated data for use with the data analysis
-software of your choosing.
+This file contains routines for extracting spectra from 2D spectrographic
+images.  They are intended to operate in a manner similar to their IRAF
+namesakes.
 """
 
 # Built-In Libraries
 from __future__ import division, print_function, absolute_import
 from datetime import datetime
 import glob
-import os, sys
+import os
 from pathlib import Path
 import shutil
+import sys
 import warnings
 
-# Numpy
-import numpy as np
+# Numpy & Similar
 import matplotlib.pyplot as plt
+import numpy as np
 from patsy import dmatrix
 from scipy.interpolate import CubicSpline
+from scipy.signal import find_peaks
 import statsmodels.api as sm
 
 # Astropy and CCDPROC
+from astropy.io import fits
 from astropy.modeling import models
 from astropy.nddata import CCDData
 from astropy.stats import mad_std
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
-from scipy.signal import find_peaks
-from astropy.io import fits
 
 from rascal.calibrator import Calibrator
 from rascal.util import load_calibration_lines
