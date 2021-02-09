@@ -14,7 +14,7 @@ from .pyldt import *
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'
-__copyright__ = 'Copyright 2020'
+__copyright__ = 'Copyright 2021'
 __credits__ = ['Lowell Observatory']
 __license__ = 'MPL-2.0'
 __version__ = '0.2.0'
