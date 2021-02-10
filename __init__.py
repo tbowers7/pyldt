@@ -11,6 +11,7 @@
 #  @author: tbowers
 
 from .pyldt import *
+from .twodspec import *
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'

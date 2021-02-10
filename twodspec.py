@@ -31,24 +31,23 @@ import sys
 import warnings
 
 # Numpy & Similar
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import numpy as np
-from patsy import dmatrix
-from scipy.interpolate import CubicSpline
+import PySimpleGUI as sg
 from scipy.signal import find_peaks
-import statsmodels.api as sm
 
 # Astropy and CCDPROC
 from astropy.io import fits
 from astropy.modeling import models
-from astropy.nddata import CCDData
+from astropy.nddata import CCDData, block_reduce
 from astropy.stats import mad_std
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
-from rascal.calibrator import Calibrator
-from rascal.util import load_calibration_lines
+#from rascal.calibrator import Calibrator
+#from rascal.util import load_calibration_lines
 
 
 # Intrapackage
@@ -64,8 +63,13 @@ __email__ = 'tbowers@lowell.edu'
 __status__ = 'Development Status :: 2 - Pre-Alpha'
 
 
-def twodspec_response():
+def twodspec_response(flatfn, function='spline3', order=1):
     """Do something like IRAF's twodspec.longlist.response()
+
+    :flatfn: Filename of the calibrated flat field image to be reponse'd.
+    :function: Fitting function
+    :order: Order of fitting function [Default: 1]
+    :return: 
     """
     ## Suppress the warning:
     ##    WARNING: FITSFixedWarning: RADECSYS= 'FK5 ' / Astrometric System
@@ -73,32 +77,163 @@ def twodspec_response():
     warnings.simplefilter('ignore', AstropyWarning)
     warnings.simplefilter('ignore', UserWarning)
 
+    # Available fitting functions:
+    funcs = ['spline3']
 
-    ### After all that jazz...
-    flat_cl = ccdp.ImageFileCollection('.', glob_include='Flat*.fits')
+    # Read in the calibrated image from disk
+    ccd = CCDData.read(flatfn)
+    print(f"Shape of ccd: {ccd.shape}")
+    ny, nx = ccd.shape
+    print(f"nx = {nx}, ny = {ny}")
 
-    for ccd, file_name in flat_cl.ccds(return_fname=True):
-        
-        
-        ## We're going to collapse the flatfield image and fit a cubic spline to it
-        nrows = ccd.shape[0]
-        spec = np.sum(ccd, axis=0) / nrows
-        
-        pixnum = range(ccd.shape[1])  # Running pixel number
-        order = 4
-        knots = (range(order)/order)[1:]*ccd.shape[0]
-        print(ccd.shape[0])
-        print(knots)
-        
-        # Fit a natural spline with knots at ages 30, 50 and 70
-        x_natural = dmatrix('cr(x, knots=(30, 50, 70))', {'x': pixnum})
-        fit_natural = sm.GLM(spec, x_natural).fit()
-        
-        # Create spline lines for 50 evenly spaced values of age
-        flat_fit = fit_natural.predict(dmatrix('cr(pixnum, knots=(30, 50, 70))', {'pixnum': pixnum}))
+    # Collapse the spatial dimension
+    spec = block_reduce(ccd, [ny,1], func=np.mean).flatten()
+    print(f"Shape of spec: {spec.shape}")
 
-        
-        
+    # Compute the running pixel numbers for the abscissa
+    pixnum = np.asarray(range(nx), dtype=int)    
+    
+
+    #=========================================================================
+    # Create GUI to interactively fit the response
+
+    # Color scheme
+    sg.theme('purple')
+
+    # Window layout
+    row1 = [sg.Canvas(size=(600,350), key='-PLOT-'), 
+            sg.Canvas(size=(600,350), key='-RESID-')]
+    row2 = [sg.Text("Fit Function:"), 
+            sg.Drop(values=(funcs),auto_size_text=True,
+                    default_value=funcs[0],key='function'), 
+            sg.Text("      Order of Fit:"), 
+            sg.Input(key='-ORDER-',size=(6,1)), 
+            sg.Button("Fit"), sg.Button("Apply"), sg.Button("Quit")]
+    row3 = [sg.Text(size=(50,1), key='-MESSAGE-', text_color='dark red')]
+
+    # Create the Window
+    window = sg.Window(
+             "twodspec.response fit",
+             [row1, row2, row3],
+             location=(0,0),
+             finalize=True,
+             element_justification="center",
+             font="Helvetica 14")
+
+    # Create the basic figues
+    ptitle = f"{ccd.header['OBSTYPE']} -- Grating: {ccd.header['GRAT_ID']}" + \
+        f"   Grangle: {ccd.header['GRANGLE']}"
+
+    fig, ax = plt.subplots(figsize=(6,4))
+    ax.plot(pixnum,spec, label="Data")
+    ax.set_ylim(ymin=0)
+    plt.xlabel('Colunmn #')
+    plt.ylabel('Mean Value (DN)')
+    plt.legend(loc='upper left')
+    plt.title(ptitle)
+ 
+    # Add the plot to the window
+    fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
+    fig_aggr = None
+    window['-MESSAGE-'].update("Enter order of fitting function to proceed")
+
+    flat_fit = None
+
+    # Run the window
+    while True:
+
+        # On event, read it in
+        event, values = window.read()
+
+        if event == sg.WIN_CLOSED or event == 'Quit':
+            break
+
+        elif event == 'Fit':
+            function = values["function"]
+            try:
+                order = int(values["-ORDER-"])
+            except ValueError:
+                window['-MESSAGE-'].update(
+                    "Please enter an integer for the order.")
+                continue
+            
+            # Parse out fitting function
+            if function == 'spline3':
+                print("Fitting cubic spline to the data")
+
+                # Fit the spline3 with specified order
+                flat_fit, ff2, knots = spline3(pixnum, spec, order)
+                print(flat_fit)
+
+            else:
+                print("Only 'spline3' currently implemented.  Try again.")
+
+            # Redraw the figures
+            fig, ax = plt.subplots(figsize=(6,4))
+            ax.plot(pixnum,spec, label="Data")
+            ax.plot(pixnum,flat_fit, 'r-', label="Fit BS")
+            ax.plot(pixnum,ff2, 'g-', label="Fit CR")
+            ax.set_ylim(ymin=0)
+            plt.vlines(knots, 0, np.max(spec), 'gray', linestyles='dashed')
+            plt.xlabel('Colunmn #')
+            plt.ylabel('Mean Value (DN)')
+            plt.legend(loc='upper left')
+            plt.title(ptitle)
+
+            if fig_agg is not None:
+                delete_fig_agg(fig_agg)
+            fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
+
+            figr, axr = plt.subplots(figsize=(6,4))
+            axr.plot(pixnum,spec/flat_fit, 'r-', label="Residual BS")
+            axr.plot(pixnum,spec/ff2, 'g-', label="Residual CR")
+            axr.plot(pixnum,spec/spec, 'b--')
+            plt.xlabel('Colunmn #')
+            plt.ylabel('Ratio')
+            plt.legend(loc='upper left')
+            lower, upper = plt.ylim()
+            print(f"Y limits: {lower} {upper}")
+            print(f"Proposed upper Y limit: {np.maximum(0.2, lower)}")
+            print(f"Proposed lower Y limit: {np.minimum(5, upper)}")
+            axr.set_ylim(ymax=np.minimum(2, upper), 
+                            ymin=np.maximum(0.5, lower))
+            plt.title(f"Residual plot for {function}, order: {order}")
+
+            if fig_aggr is not None:
+                delete_fig_agg(fig_aggr)
+            fig_aggr = draw_figure(window["-RESID-"].TKCanvas, figr)
+
+            window['-MESSAGE-'].update(
+                "Refit if necessary, or click 'Apply' to divide the flat.")
+
+        elif event == 'Apply':
+
+            # Do the division of ccd and save to file
+            if flat_fit is None:
+                window['-MESSAGE-'].update(
+                    "You must attempt a fit before applying.")
+            else:
+                print("Doing the division now... quitting.")
+                break
+
+
+
+
+    window.close()
+
+
+    # ## Figure!
+    # fig, ax = plt.subplots(figsize=(6.5, 4))
+    # ax.plot(pixnum,spec)
+    # ax.plot(pixnum,flat_fit,'r-')
+    # ax.set_ylim(ymin=0)
+    # plt.title(flatfn)
+    # plt.show()
+
+    pass
+
+    """   
+     
         
         ## Figure!
         fig, ax = plt.subplots(figsize=(6.5, 4))
@@ -107,7 +242,8 @@ def twodspec_response():
         ax.set_ylim(ymin=0)
         plt.title(file_name)
         plt.show()
-        
+    """  
+
 def twodspec_apextract():
     ## Suppress the warning:
     ##    WARNING: FITSFixedWarning: RADECSYS= 'FK5 ' / Astrometric System
@@ -211,3 +347,20 @@ def twodspec_identify():
 
 def twodspec_reidentify():
     pass
+
+
+
+
+#=============================================================================
+# Graphics helper functions
+
+def draw_figure(canvas, figure):
+    figure_canvas_agg = FigureCanvasTkAgg(figure, canvas)
+    figure_canvas_agg.draw()
+    figure_canvas_agg.get_tk_widget().pack(side="top", fill="both", expand=1)
+    return figure_canvas_agg
+
+
+def delete_fig_agg(fig_agg):
+    fig_agg.get_tk_widget().forget()
+    plt.close('all')

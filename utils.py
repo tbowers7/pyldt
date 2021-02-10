@@ -42,14 +42,14 @@ def mmms(image):
     return np.min(image), np.max(image), np.mean(image), np.std(image)
 
 
-def spline3(xs, ys, order, debug=True):
-    """spline computes a cubic spline
+def spline3(xs, ys, order=2, debug=True):
+    """spline3 computes a cubic spline of specified order to fit input data
 
-    :param xs:
-    :param ys:
-    :param order:
-    :param debug:
-    :return:
+    :param xs: Array of input abscissa values
+    :param ys: Array of input ordinate values
+    :param order: Order of the cublic spline to fit [Default: 2]
+    :param debug: Print debugging statements [Default: True]
+    :return: Returns the fitted ordinate values to the input data
     """
     # Define the knots for the cubic spline: evenly sized segments
     knots = np.asarray(range(order))[1:] / order * (xs[-1] + 1)
@@ -63,17 +63,22 @@ def spline3(xs, ys, order, debug=True):
             knot_str += '{})'.format(kn)
 
     if debug:
-        print(knot_str)
+        print(f"The knot string is: >>{knot_str}<<")
 
     # Fit a natural spline with specified knots
-    x_natural = dmatrix('cr(x, knots=' + knot_str + ')', {'x': xs})
-    fit_natural = sm.GLM(ys, x_natural).fit()
+    x_bs = dmatrix(f'bs(x, knots={knot_str})', {'x': xs})
+    fit_bs = sm.GLM(ys, x_bs).fit()
+ 
+    x_cr = dmatrix(f'cr(x, knots={knot_str})', {'x': xs})
+    fit_cr = sm.GLM(ys, x_cr).fit()
 
     # Create spline at xs
-    fit = fit_natural.predict(dmatrix('cr(xs, knots=' + knot_str + ')',
-                                      {'xs': xs}))
+    fit1 = fit_bs.predict(dmatrix(f'bs(xs, knots={knot_str})',{'xs': xs}))
+    fit2 = fit_cr.predict(dmatrix(f'cr(xs, knots={knot_str})',{'xs': xs}))
 
-    if debug:
-        print(type(x_natural), type(fit_natural), type(fit))
+    # if debug:
+    #     print(f"Type of x_natural: {type(x_natural)}")
+    #     print(f"Type of fit_natural: {type(fit_natural)}")
+    #     print(f"Type of fit: {type(fit)}")
 
-    return fit
+    return fit1, fit2, knots
