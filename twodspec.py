@@ -62,6 +62,13 @@ __version__ = '0.2.0'
 __email__ = 'tbowers@lowell.edu'
 __status__ = 'Development Status :: 2 - Pre-Alpha'
 
+## Suppress the warning:
+##    WARNING: FITSFixedWarning: RADECSYS= 'FK5 ' / Astrometric System
+##    the RADECSYS keyword is deprecated, use RADESYSa. [astropy.wcs.wcs]
+warnings.simplefilter('ignore', AstropyWarning)
+warnings.simplefilter('ignore', UserWarning)
+
+
 
 def twodspec_response(flatfn, function='spline3', order=1):
     """Do something like IRAF's twodspec.longlist.response()
@@ -71,11 +78,6 @@ def twodspec_response(flatfn, function='spline3', order=1):
     :order: Order of fitting function [Default: 1]
     :return: 
     """
-    ## Suppress the warning:
-    ##    WARNING: FITSFixedWarning: RADECSYS= 'FK5 ' / Astrometric System
-    ##    the RADECSYS keyword is deprecated, use RADESYSa. [astropy.wcs.wcs]
-    warnings.simplefilter('ignore', AstropyWarning)
-    warnings.simplefilter('ignore', UserWarning)
 
     # Available fitting functions:
     funcs = ['spline3']
@@ -228,11 +230,6 @@ def twodspec_response(flatfn, function='spline3', order=1):
 
 
 def twodspec_apextract():
-    ## Suppress the warning:
-    ##    WARNING: FITSFixedWarning: RADECSYS= 'FK5 ' / Astrometric System
-    ##    the RADECSYS keyword is deprecated, use RADESYSa. [astropy.wcs.wcs]
-    warnings.simplefilter('ignore', AstropyWarning)
-    warnings.simplefilter('ignore', UserWarning)
 
 
     if len(sys.argv) < 2:
