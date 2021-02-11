@@ -162,8 +162,13 @@ def twodspec_response(flatfn, function='spline3', order=1):
                 print("Fitting cubic spline to the data")
 
                 # Fit the spline3 with specified order
-                flat_fit, ff2, knots = spline3(pixnum, spec, order)
-                print(flat_fit)
+                flat_fit, knots, errmsg = spline3(pixnum, spec, order)
+
+                # Print error message to window if not blank
+                if errmsg != '':
+                    window['-MESSAGE-'].update(
+                        errmsg)
+                    continue
 
             else:
                 print("Only 'spline3' currently implemented.  Try again.")
@@ -171,10 +176,9 @@ def twodspec_response(flatfn, function='spline3', order=1):
             # Redraw the figures
             fig, ax = plt.subplots(figsize=(6,4))
             ax.plot(pixnum,spec, label="Data")
-            ax.plot(pixnum,flat_fit, 'r-', label="Fit BS")
-            ax.plot(pixnum,ff2, 'g-', label="Fit CR")
+            ax.plot(pixnum,flat_fit, 'r-', label="Fit")
             ax.set_ylim(ymin=0)
-            plt.vlines(knots, 0, np.max(spec), 'gray', linestyles='dashed')
+            plt.vlines(knots, 0, np.max(spec), 'lightgray', linestyles='dashed')
             plt.xlabel('Colunmn #')
             plt.ylabel('Mean Value (DN)')
             plt.legend(loc='upper left')
@@ -185,8 +189,7 @@ def twodspec_response(flatfn, function='spline3', order=1):
             fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
 
             figr, axr = plt.subplots(figsize=(6,4))
-            axr.plot(pixnum,spec/flat_fit, 'r-', label="Residual BS")
-            axr.plot(pixnum,spec/ff2, 'g-', label="Residual CR")
+            axr.plot(pixnum,spec/flat_fit, 'r-', label="Ratio")
             axr.plot(pixnum,spec/spec, 'b--')
             plt.xlabel('Colunmn #')
             plt.ylabel('Ratio')
@@ -197,6 +200,8 @@ def twodspec_response(flatfn, function='spline3', order=1):
             print(f"Proposed lower Y limit: {np.minimum(5, upper)}")
             axr.set_ylim(ymax=np.minimum(2, upper), 
                             ymin=np.maximum(0.5, lower))
+            lower, upper = plt.ylim()
+            plt.vlines(knots, lower, upper, 'lightgray', linestyles='dashed')
             plt.title(f"Residual plot for {function}, order: {order}")
 
             if fig_aggr is not None:
@@ -221,28 +226,6 @@ def twodspec_response(flatfn, function='spline3', order=1):
 
     window.close()
 
-
-    # ## Figure!
-    # fig, ax = plt.subplots(figsize=(6.5, 4))
-    # ax.plot(pixnum,spec)
-    # ax.plot(pixnum,flat_fit,'r-')
-    # ax.set_ylim(ymin=0)
-    # plt.title(flatfn)
-    # plt.show()
-
-    pass
-
-    """   
-     
-        
-        ## Figure!
-        fig, ax = plt.subplots(figsize=(6.5, 4))
-        ax.plot(pixnum,spec)
-        #ax.plot(pixnum,flat_fit,'r-')
-        ax.set_ylim(ymin=0)
-        plt.title(file_name)
-        plt.show()
-    """  
 
 def twodspec_apextract():
     ## Suppress the warning:

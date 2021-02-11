@@ -20,7 +20,7 @@ from __future__ import division, print_function, absolute_import
 
 # Third-Party Libraries
 import numpy as np
-from patsy import dmatrix
+from patsy import dmatrix, PatsyError
 import statsmodels.api as sm
 
 # Boilerplate variables
@@ -42,43 +42,72 @@ def mmms(image):
     return np.min(image), np.max(image), np.mean(image), np.std(image)
 
 
-def spline3(xs, ys, order=2, debug=True):
+def spline3(xs, ys, order=4, debug=False, ftype='bs', bc='nak'):
     """spline3 computes a cubic spline of specified order to fit input data
 
     :param xs: Array of input abscissa values
     :param ys: Array of input ordinate values
-    :param order: Order of the cublic spline to fit [Default: 2]
-    :param debug: Print debugging statements [Default: True]
-    :return: Returns the fitted ordinate values to the input data
+    :param order: Order of the cublic spline to fit [Default: 4]
+    :param debug: Print debugging statements [Default: False]
+    :param ftype: Type of spline [Default: 'bs': 'B-Spline']
+    :param bc: Boundary Condition [Default: 'nak' = Not-a-Knot]
+    :return: Returns the fitted ordinate values, knot position, and errmsg
     """
+
+    errmsg = ''
+
     # Define the knots for the cubic spline: evenly sized segments
     knots = np.asarray(range(order))[1:] / order * (xs[-1] + 1)
 
-    # Create the string of these values to pass to dmatrix (from patsy)
-    knot_str = '('
-    for kn in knots:
-        if kn != knots[-1]:
-            knot_str += '{},'.format(kn)
-        else:
-            knot_str += '{})'.format(kn)
-
-    if debug:
-        print(f"The knot string is: >>{knot_str}<<")
-
-    # Fit a natural spline with specified knots
-    x_bs = dmatrix(f'bs(x, knots={knot_str})', {'x': xs})
-    fit_bs = sm.GLM(ys, x_bs).fit()
+     # For the "not-a-knot" boundary condition, remove first and last knots:
+    if bc == 'nak':
+        knots = knots[1:-1]
+    
+    # Select the type of cublic spline fit:
+    if ftype == 'bs':
+        # B-Spline
  
-    x_cr = dmatrix(f'cr(x, knots={knot_str})', {'x': xs})
-    fit_cr = sm.GLM(ys, x_cr).fit()
+        # Create the string of knot values to pass to dmatrix (from patsy)
+        knot_str = '('
+        for kn in knots:
+            knot_str += f'{kn},'
+        knot_str = knot_str[:-1]+')'
+    
+        # Print statement
+        if debug:
+            print(f"The knot string is: >>{knot_str}<<")
 
-    # Create spline at xs
-    fit1 = fit_bs.predict(dmatrix(f'bs(xs, knots={knot_str})',{'xs': xs}))
-    fit2 = fit_cr.predict(dmatrix(f'cr(xs, knots={knot_str})',{'xs': xs}))
+        # Fit the B-Spline with specified knots
+        x_bs = dmatrix(f'bs(x, knots={knot_str}, degree=3)', {'x': xs})
+        
+        # Fit Generalized Linear Model on the transformed dataset
+        fit_bs = sm.GLM(ys, x_bs).fit()
 
-    # if debug:
-    #     print(f"Type of x_natural: {type(x_natural)}")
-    #     print(f"Type of fit_natural: {type(fit_natural)}")
-    #     print(f"Type of fit: {type(fit)}")
+        # Create the spline along the spectrum
+        fit = fit_bs.predict(x_bs)
 
-    return fit1, fit2, knots
+    elif ftype == 'cr':
+        # Natural cublic spline (cubic regression)
+
+        # Fit a natural spline with degrees of freedom = K = order-1
+        try:
+            x_cr = dmatrix(f'cr(x, df={order-1})', {'x': xs})
+
+            # Fit Generalized Linear Model on transformed dataset
+            fit_cr = sm.GLM(ys, x_cr).fit()  
+
+            # Create the spline along the spectrum
+            fit = fit_cr.predict(dmatrix(f'cr(x, df={order-1})',{'x': xs}))
+
+        except PatsyError:
+            print("Order too low.  Cannot compute.")
+            errmsg = "Selected order is too small for fit."
+            fit = None
+        
+    else:
+        print(f"Did something wrong, dude.  " + \
+            f"Don't recognize the fit type '{ftype}'")
+        errmsg = "Wrong fit type passed to spline3"
+        fit = None
+
+    return fit, knots, errmsg
