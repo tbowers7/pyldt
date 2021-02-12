@@ -73,9 +73,9 @@ warnings.simplefilter('ignore', UserWarning)
 def twodspec_response(flatfn, function='spline3', order=1):
     """Do something like IRAF's twodspec.longlist.response()
 
-    :flatfn: Filename of the calibrated flat field image to be reponse'd.
-    :function: Fitting function
-    :order: Order of fitting function [Default: 1]
+    :param flatfn: Filename of the calibrated flat field image to be reponse'd.
+    :param function: Fitting function
+    :param order: Order of fitting function [Default: 1]
     :return: 
     """
 
@@ -229,50 +229,89 @@ def twodspec_response(flatfn, function='spline3', order=1):
     window.close()
 
 
-def twodspec_apextract():
+def twodspec_apextract(file_name, stype='model', write_1d=True,
+                       del_input=False):
+    """Aperture extraction.  Do something like IRAF's twodspec.axpextract()
 
+    Routine only accepts single-order spectra at the moment... could be
+    expanded in the future, as desired.  Follow the example in PyDeVeny.
 
-    if len(sys.argv) < 2:
-        print("Script requires a filename to extract.")
-        sys.exit()
+    :param file_name: Name of file to be apextract'd
+    :param stype: Type of spectrum (like DeVeny's swext in dextract)
+    :param write_1d: Write out the 1D Spectrum to disk? [Default: True]
+    :param del_input: Also delete input file? [Default: False]
+    :return: spectrum, pixnum (Spectrum, and Running Pixel Number)
+    """
 
-    file_name = sys.argv[1]
-        
+    # Check for existance of file        
     if not os.path.isfile(file_name):
         print("File either does not exist or cannot be read.")
-        sys.exit()
+        return
 
+    # Read in said file
     ccd = CCDData.read(file_name)
+    print(f"Shape of ccd: {ccd.shape}")
+    ny, nx = ccd.shape
+    print(f"nx = {nx}, ny = {ny}")
 
-    spec = ccdp.block_average(ccd[200:350], [150, 1])
-    print(spec.ndim)
+    # Define the aperture to extract
+    trace, width = twodspec_apdefine(ccd, stype=stype)
+
+    # Case out stype:
+    if stype == 'star':
+        pass
+    elif stype == 'model':
+        # Model Spectra (flats, model arcs, etc.)
+        spectrum = ccdp.block_average(ccd, [ny,1])  # Squash, keeping header
+        halfwin = int(np.floor(width/2))
+
+        # Because of python indexing, we need to "+1" the upper limit in order
+        #   to get the full wsize elements for the average
+        for i in range(nx):
+            spectrum.data[0,i] = np.average(
+                ccd.data[int(trace[i]) - halfwin : 
+                         int(trace[i]) + halfwin + 1, i])
+        
+        
+    else:
+        pass
+
+    if write_1d:
+        # Write one-dimensional spectrum to disk
+        oned_fn = '{0}_1d{1}'.format(file_name[:-5],file_name[-5:])
+        spectrum.write(oned_fn, overwrite=True)
+        if del_input:
+            os.remove(file_name)
+
+    pixnum = np.asarray(range(nx)).flatten()  # Running pixel number
+    return spectrum, pixnum
 
 
-    print(spec.shape, ccd.shape)
+def twodspec_apdefine(ccd, stype='star'):
+    """Apdefine -- define an aperture
 
-    pixnum = np.asarray(range(ccd.shape[1])).flatten()  # Running pixel number
+    :param ccd: Input CCDData object
+    :param stype: Type of spectrum for which to define an aperture
+    :return:
+    """
 
-    print(type(spec),type(pixnum))
-    print(spec.shape, pixnum.shape)
+    # Get image dimensions
+    ny, nx = ccd.shape
 
+    # Case out spectrum types
+    if stype == 'star':
+        pass
 
-    ## Figure!
-    fig, ax = plt.subplots(figsize=(6.5, 4))
-    ax.plot(pixnum,np.transpose(spec))
-    #ax.plot(pixnum,flat_fit,'r-')
-    ax.set_ylim(ymin=0)
-    plt.title(file_name)
-    plt.show()
+    elif stype == 'model':
+        # Model Spectra (flats, model arcs, etc.)
+        # Trace down the middle, with a window pix wide
+        trace = np.full(nx, ny/2, dtype=float)
+        width = 201
 
+    else:
+        pass
 
-    oned_fn = '{0}_1d{1}'.format(file_name[:-5],file_name[-5:])
-
-    spec.write(oned_fn, overwrite=True)
-    os.remove(file_name)
-
-
-def twodspec_apdefine():
-    pass
+    return trace, width
 
 
 def twodspec_identify():
