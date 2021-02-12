@@ -10,6 +10,12 @@
 #
 #  @author: tbowers
 
+# Silence the AstropyDeprecationWarning: 
+#    block_replicate was moved to the astropy.nddata.blocks module.
+import warnings
+from astropy.utils.exceptions import AstropyDeprecationWarning
+warnings.simplefilter('ignore', AstropyDeprecationWarning)
+
 from .pyldt import *
 from .twodspec import *
 
