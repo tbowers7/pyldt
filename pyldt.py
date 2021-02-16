@@ -55,14 +55,17 @@ __credits__ = ['Lowell Observatory']
 __license__ = 'MPL-2.0'
 __version__ = '0.2.0'
 __email__ = 'tbowers@lowell.edu'
-__status__ = 'Development Status :: 2 - Pre-Alpha'
+__status__ = 'Development Status :: 3 - Alpha'
 
+# Global Variables
+PKG_NAME = 'PyLDT '+'='*55      # For header metadata printing
 
 class _ImageDirectory:
     """Internal class, parent of LMI & DeVeny.
     Contains collective metadata for a single night's data images.  This
     parent class is modified for specific differences between LMI and DeVeny.
     """
+
 
     def __init__(self, path, debug=True, show_warnings=False):
         """__init__: Initialize the internal _ImageDirectory class.
@@ -96,19 +99,29 @@ class _ImageDirectory:
         self.zerofn = 'bias.fits'
         # Create Placeholder for initial ImageFileCollection for the directory
         self._file_cl = None
-        # For header metadata printing
-        self.proc_id = 'PyLDT '+'='*55
+
 
     def _inspectimages(self, binning=None, deveny=False):
+        """Inspect the images in the specified directory
+
+        Inspects the images in the specified directory, and loads in the
+        default BIASSEC and TRIMSEC values (if not specified at Class
+        instantiation).  For folders of DeVeny data, also modifies the FILTREAR
+        keyword and adds a GRAT_ID keyword containing the DVx name of the
+        grating.
+
+        :param binning: The CCD binning of the image
+        :param deveny: Is this a directory of DeVeny data?
+        :return: None
         """
 
-        :param binning:
-        :param deveny:
-        :return:
-        """
+        # Print a helpful statement that image inspection is happening
+        if self.debug:
+            print('Inspecting the images in this directory...')
+
         # Check that binning is set
         if binning is None:
-            raise
+            raise InputError('Binning not set.')
         if self.debug:
             print(f'Binning is: {binning}')
 
@@ -127,22 +140,24 @@ class _ImageDirectory:
                 self.biassec = ccd.header['biassec']
             if self.trimsec is None:
                 self.trimsec = ccd.header['trimsec']
+            
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
             if deveny:
-                if len(ccd.header['filtrear']) == 9:
-                    ccd.header['filtrear'] = ccd.header['filtrear'][0:5]
+                ccd.header['filtrear'] = ccd.header['filtrear'].split(' (')[0]
                 grname = grating_ids[grating_kwds.index(ccd.header['grating'])]
                 ccd.header.set('grat_id', grname, 'Grating ID Name',
                                after='grating')
                 ccd.write(f'{self.path}/{fname}', overwrite=True)
 
+
     def copy_raw(self, overwrite=False):
         """Copy raw FITS files to subdirectory 'raw' for safekeeping.
         If a directory containing the raw data is not extant, create it and copy
         all FITS files there as a backup.
-        :return:
+        :return: None
         """
+
         raw_data = Path(self.path, 'raw')
         if not raw_data.exists():
             raw_data.mkdir(exist_ok=True)
@@ -158,6 +173,7 @@ class _ImageDirectory:
                 print(f'Copying {img} to {raw_data}...')
                 shutil.copy2(img, raw_data)
 
+
     def _biascombine(self, binning=None, output="bias.fits"):
         """Finds and combines bias frames with the indicated binning
 
@@ -166,9 +182,9 @@ class _ImageDirectory:
         :return:
         """
         if binning is None:
-            raise
+            raise InputError('Binning not set.')
         if self.debug:
-            print(binning, output)
+            print(f"Combining bias frames with binning {binning} into {output}...")
 
         # First, refresh the ImageFileCollection
         self._file_cl.refresh()
@@ -178,11 +194,12 @@ class _ImageDirectory:
                                                  bitpix=16,
                                                  imagetyp='bias',
                                                  return_fname=True):
+
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
 
             # Update the header
-            ccd.header['HISTORY'] = self.proc_id
+            ccd.header['HISTORY'] = PKG_NAME
             ccd.header['HISTORY'] = 'Trimmed bias saved: ' + _savetime()
             ccd.header['HISTORY'] = f'Original filename: {file_name}'
 
@@ -199,7 +216,7 @@ class _ImageDirectory:
         if t_bias_cl.files:
 
             if self.debug:
-                print(f"Combining bias frames with binning {binning}...")
+                print(f"Doing median combine now...")
             comb_bias = ccdp.combine(
                 [f'{self.path}/{fn}' for fn in t_bias_cl.files],
                 method='median',
@@ -232,7 +249,9 @@ class _ImageDirectory:
         :return:
         """
         if self.binning is None:
-            raise
+            raise InputError('Binning not set.')
+        if self.debug:
+            print("Subtracting bias from remaining images...")
 
         # Refresh the ImageFileCollection
         self._file_cl.refresh()
@@ -256,7 +275,7 @@ class _ImageDirectory:
             ccd = ccdp.subtract_bias(ccd, combined_bias)
 
             # Update the header
-            ccd.header['HISTORY'] = self.proc_id
+            ccd.header['HISTORY'] = PKG_NAME
             ccd.header['HISTORY'] = 'Bias-subtracted image saved: ' + \
                                     _savetime()
             ccd.header['HISTORY'] = f'Subtracted bias: {self.zerofn}'
@@ -353,6 +372,9 @@ class LMI(_ImageDirectory):
         bsub_cl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*b.fits')
 
+        if self.debug:
+            print("Normalizing flat field frames...")
+
         # Normalize flat field images by the mean value
         for flat_type in ['sky flat', 'dome flat']:
             for ccd, flat_fn in bsub_cl.ccds(ccdsum=self.binning,
@@ -398,7 +420,7 @@ class LMI(_ImageDirectory):
                 # Add FITS keyword NCOMB and HISTORY
                 cflat.header.set('ncomb', len(flats),
                                  '# of input images in combination')
-                cflat.header['HISTORY'] = self.proc_id
+                cflat.header['HISTORY'] = PKG_NAME
                 cflat.header['HISTORY'] = 'Combined flat created: ' + \
                                           _savetime()
                 cflat.header['HISTORY'] = 'Median combined ' + \
@@ -457,7 +479,7 @@ class LMI(_ImageDirectory):
 
                     # Update the header
                     ccd.header['flatcor'] = True
-                    ccd.header['HISTORY'] = self.proc_id
+                    ccd.header['HISTORY'] = PKG_NAME
                     ccd.header['HISTORY'] = 'Flat-corrected image saved: ' + \
                                             _savetime()
                     ccd.header['HISTORY'] = f'Divided by flat: {mflat_fn}'
@@ -474,6 +496,7 @@ class DeVeny(_ImageDirectory):
 
     """
 
+
     def __init__(self, path, biassec=None, trimsec=None, prefix=None,
                  multilamp=False):
         """__init__: Initialize DeVeny class.
@@ -487,6 +510,7 @@ class DeVeny(_ImageDirectory):
                 The IRAF-style image region to be retained in each frame.
                 If unspecified, use the values suggested in the LMI User Manual.
         """
+        
         _ImageDirectory.__init__(self, path)
         self.bin_factor = 1
         self.binning = f'{self.bin_factor} {self.bin_factor}'
@@ -508,6 +532,7 @@ class DeVeny(_ImageDirectory):
             self.prefix = prefix
         if self.debug:
             print(f'Directory prefix: {self.prefix}')
+        
         # Define standard filenames
         self.zerofn = 'bias.fits'
 
@@ -526,6 +551,7 @@ class DeVeny(_ImageDirectory):
 
         self._file_cl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
+
 
     def process_all(self):
         """Process all of the images in this directory (with given binning)
@@ -546,6 +572,7 @@ class DeVeny(_ImageDirectory):
         self.bias_subtract()
         self.flat_combine()
 
+
     def inspect_images(self):
         """Checks that the relevant metadata is set
         Looks to ensure BIASSEC and TRIMSEC values are properly set
@@ -554,6 +581,7 @@ class DeVeny(_ImageDirectory):
         """
         self._inspectimages(self.binning, deveny=True)
 
+
     def bias_combine(self):
         """Combine the bias frames in the directory with a given binning
         Basic emulation of IRAF's zerocombine.  Produces a combined bias image
@@ -561,6 +589,7 @@ class DeVeny(_ImageDirectory):
         :return: None
         """
         self._biascombine(self.binning, output=self.zerofn)
+
 
     def flat_combine(self):
         """
@@ -632,7 +661,7 @@ class DeVeny(_ImageDirectory):
                             # Add FITS keyword NCOMB and HISTORY
                             cflat.header.set('ncomb', len(lamp_cl.files),
                                              '# of input images in combination')
-                            cflat.header['HISTORY'] = self.proc_id
+                            cflat.header['HISTORY'] = PKG_NAME
                             cflat.header['HISTORY'] = 'Combined flat ' + \
                                                       'created: ' + _savetime()
                             cflat.header['HISTORY'] = \
@@ -656,6 +685,22 @@ class DeVeny(_ImageDirectory):
                                 os.remove(f'{fn}')
         else:
             print("No flats to be combined.")
+
+
+# Error Classes
+class Error(Exception):
+    """Base class for exceptions in this module."""
+    pass
+
+class InputError(Error):
+    """Exception raised for errors in the input.
+
+    Attributes:
+        message -- explanation of the error
+    """
+
+    def __init__(self, message):
+        self.message = message
 
 
 # Non-class function definitions
@@ -732,7 +777,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     # Add FITS keyword COMBINED and add HISTORY
     comb_img.header.set('ncomb', len(file_cl.files),
                         '# of input images in combination')
-    comb_img.header['HISTORY'] = self.proc_id
+    comb_img.header['HISTORY'] = PKG_NAME
     comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
     comb_img.header['HISTORY'] = f'{combine.title()} combined ' + \
                                  f'{len(file_cl.files)} files:'
