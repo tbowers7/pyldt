@@ -96,6 +96,8 @@ class _ImageDirectory:
         self.zerofn = 'bias.fits'
         # Create Placeholder for initial ImageFileCollection for the directory
         self._file_cl = None
+        # For header metadata printing
+        self.proc_id = 'PyLDT '+'='*55
 
     def _inspectimages(self, binning=None, deveny=False):
         """
@@ -180,6 +182,7 @@ class _ImageDirectory:
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
 
             # Update the header
+            ccd.header['HISTORY'] = self.proc_id
             ccd.header['HISTORY'] = 'Trimmed bias saved: ' + _savetime()
             ccd.header['HISTORY'] = f'Original filename: {file_name}'
 
@@ -253,6 +256,7 @@ class _ImageDirectory:
             ccd = ccdp.subtract_bias(ccd, combined_bias)
 
             # Update the header
+            ccd.header['HISTORY'] = self.proc_id
             ccd.header['HISTORY'] = 'Bias-subtracted image saved: ' + \
                                     _savetime()
             ccd.header['HISTORY'] = f'Subtracted bias: {self.zerofn}'
@@ -394,6 +398,7 @@ class LMI(_ImageDirectory):
                 # Add FITS keyword NCOMB and HISTORY
                 cflat.header.set('ncomb', len(flats),
                                  '# of input images in combination')
+                cflat.header['HISTORY'] = self.proc_id
                 cflat.header['HISTORY'] = 'Combined flat created: ' + \
                                           _savetime()
                 cflat.header['HISTORY'] = 'Median combined ' + \
@@ -452,6 +457,7 @@ class LMI(_ImageDirectory):
 
                     # Update the header
                     ccd.header['flatcor'] = True
+                    ccd.header['HISTORY'] = self.proc_id
                     ccd.header['HISTORY'] = 'Flat-corrected image saved: ' + \
                                             _savetime()
                     ccd.header['HISTORY'] = f'Divided by flat: {mflat_fn}'
@@ -626,6 +632,7 @@ class DeVeny(_ImageDirectory):
                             # Add FITS keyword NCOMB and HISTORY
                             cflat.header.set('ncomb', len(lamp_cl.files),
                                              '# of input images in combination')
+                            cflat.header['HISTORY'] = self.proc_id
                             cflat.header['HISTORY'] = 'Combined flat ' + \
                                                       'created: ' + _savetime()
                             cflat.header['HISTORY'] = \
@@ -725,6 +732,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     # Add FITS keyword COMBINED and add HISTORY
     comb_img.header.set('ncomb', len(file_cl.files),
                         '# of input images in combination')
+    comb_img.header['HISTORY'] = self.proc_id
     comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
     comb_img.header['HISTORY'] = f'{combine.title()} combined ' + \
                                  f'{len(file_cl.files)} files:'
