@@ -284,7 +284,7 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
             os.remove(file_name)
 
     pixnum = np.asarray(range(nx)).flatten()  # Running pixel number
-    return spectrum, pixnum
+    return np.asarray(spectrum).flatten(), pixnum
 
 
 def twodspec_apdefine(ccd, stype='star'):
