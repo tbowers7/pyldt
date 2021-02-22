@@ -227,8 +227,8 @@ class _ImageDirectory:
                 sigma_clip_dev_func=mad_std,
                 mem_limit=4e9)
 
-            # Add FITS keyword NCOMB and HISTORY
-            comb_bias.header.set('ncomb', len(t_bias_cl.files),
+            # Add FITS keyword NCOMBINE and HISTORY
+            comb_bias.header.set('ncombine', len(t_bias_cl.files),
                                  '# of input images in combination')
             comb_bias.header['HISTORY'] = 'Combined bias created: ' + \
                                           _savetime()
@@ -417,8 +417,8 @@ class LMI(_ImageDirectory):
                                      sigma_clip_dev_func=mad_std,
                                      mem_limit=4e9)
 
-                # Add FITS keyword NCOMB and HISTORY
-                cflat.header.set('ncomb', len(flats),
+                # Add FITS keyword NCOMBINE and HISTORY
+                cflat.header.set('ncombine', len(flats),
                                  '# of input images in combination')
                 cflat.header['HISTORY'] = PKG_NAME
                 cflat.header['HISTORY'] = 'Combined flat created: ' + \
@@ -658,8 +658,8 @@ class DeVeny(_ImageDirectory):
                                                  sigma_clip_dev_func=mad_std,
                                                  mem_limit=4e9)
 
-                            # Add FITS keyword NCOMB and HISTORY
-                            cflat.header.set('ncomb', len(lamp_cl.files),
+                            # Add FITS keyword NCOMBINE and HISTORY
+                            cflat.header.set('ncombine', len(lamp_cl.files),
                                              '# of input images in combination')
                             cflat.header['HISTORY'] = PKG_NAME
                             cflat.header['HISTORY'] = 'Combined flat ' + \
@@ -774,8 +774,8 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
                             sigma_clip_dev_func=mad_std,
                             mem_limit=4e9)
 
-    # Add FITS keyword COMBINED and add HISTORY
-    comb_img.header.set('ncomb', len(file_cl.files),
+    # Add FITS keyword NCOMBINE and add HISTORY
+    comb_img.header.set('ncombine', len(file_cl.files),
                         '# of input images in combination')
     comb_img.header['HISTORY'] = PKG_NAME
     comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
