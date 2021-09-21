@@ -46,7 +46,7 @@ import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
 # Intrapackage
-from .utils import *
+from utils import *
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'
@@ -259,7 +259,12 @@ class _ImageDirectory:
         # Load the appropriate bias frame to subtract
         if not os.path.isfile(f'{self.path}/{self.zerofn}'):
             self._biascombine(binning=self.binning)
-        combined_bias = CCDData.read(f'{self.path}/{self.zerofn}')
+        try:
+            combined_bias = CCDData.read(f'{self.path}/{self.zerofn}')
+        except FileNotFoundError:
+            # Just skip the bias subtraction
+            print(f"Skipping bias subtraction for lack of {self.zerofn}")
+            return
 
         # Loop through files,
         for ccd, file_name in self._file_cl.ccds(ccdsum=self.binning,
@@ -524,7 +529,7 @@ class DeVeny(_ImageDirectory):
         if prefix is None:
             # Look at all the 20*.fits files in this directory, and choose
             # Note: This will need to be updated for the year 2100
-            fitsfiles = glob.glob(self.path + '/' + '20*.fits')
+            fitsfiles = glob.glob(self.path + '/' + '20*.????.fits')
             if fitsfiles:
                 slashind = fitsfiles[0].rfind('/')
                 self.prefix = fitsfiles[0][slashind + 1:slashind + 9]
@@ -553,7 +558,7 @@ class DeVeny(_ImageDirectory):
             self.path, glob_include=f'{self.prefix}.*.fits')
 
 
-    def process_all(self):
+    def process_all(self, no_flat=False, force_copy=False):
         """Process all of the images in this directory (with given binning)
         The result of running this method will be to process all of the images
         in the specified directory (and given binning) through all of the basic
@@ -566,11 +571,12 @@ class DeVeny(_ImageDirectory):
             * divide_flat() -- Divide all science frames by the appropriate flat
         :return: None
         """
-        self.copy_raw()
+        self.copy_raw(overwrite=force_copy)
         self.inspect_images()
         self.bias_combine()
         self.bias_subtract()
-        self.flat_combine()
+        if not no_flat:
+            self.flat_combine()
 
 
     def inspect_images(self):
@@ -705,7 +711,7 @@ class InputError(Error):
 
 # Non-class function definitions
 def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
-              printstat=True, overwrite=True):
+              printstat=True, overwrite=True, returnccd=False):
     """Combine a collection of images
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
     list of images to be combined, and the result is written to disk with an
@@ -719,7 +725,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     :param combine: `str`: Combine method.  'median' (default), or 'mean'
     :param printstat: `bool`: Print image statistics to screen
     :param overwrite: `bool`: Overwrite the output file.  Default: True
-    :return: None
+    :return: None (Unless returnccd=True, then it returns the combined CCDData)
     """
 
     # Unpack the single-item tuple *infiles
@@ -783,6 +789,10 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
                                  f'{len(file_cl.files)} files:'
     for fn in file_cl.files:
         comb_img.header['HISTORY'] = fn
+
+    # If returnccd is True, return now before thinking about saving.
+    if returnccd:
+        return comb_img
 
     # Build filename (if not specified in call), save, remove input files
     if outfn is None:

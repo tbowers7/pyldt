@@ -46,10 +46,6 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
-#from rascal.calibrator import Calibrator
-#from rascal.util import load_calibration_lines
-
-
 # Intrapackage
 from .utils import *
 
@@ -67,7 +63,6 @@ __status__ = 'Development Status :: 2 - Pre-Alpha'
 ##    the RADECSYS keyword is deprecated, use RADESYSa. [astropy.wcs.wcs]
 warnings.simplefilter('ignore', AstropyWarning)
 warnings.simplefilter('ignore', UserWarning)
-
 
 
 def twodspec_response(flatfn, function='spline3', order=1):
@@ -223,14 +218,11 @@ def twodspec_response(flatfn, function='spline3', order=1):
                 print("Doing the division now... quitting.")
                 break
 
-
-
-
     window.close()
 
 
 def twodspec_apextract(file_name, stype='model', write_1d=True,
-                       del_input=False):
+                       del_input=False, return_hdr=False):
     """Aperture extraction.  Do something like IRAF's twodspec.axpextract()
 
     Routine only accepts single-order spectra at the moment... could be
@@ -240,7 +232,8 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
     :param stype: Type of spectrum (like DeVeny's swext in dextract)
     :param write_1d: Write out the 1D Spectrum to disk? [Default: True]
     :param del_input: Also delete input file? [Default: False]
-    :return: spectrum, pixnum (Spectrum, and Running Pixel Number)
+    :param return_hdr: Return the FITS header? [Default: False]
+    :return: spectrum, pixnum [,header] (Spectrum, Pixel Number [,FITS header])
     """
 
     # Check for existance of file        
@@ -283,8 +276,14 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
         if del_input:
             os.remove(file_name)
 
-    pixnum = np.asarray(range(nx)).flatten()  # Running pixel number
-    return np.asarray(spectrum).flatten(), pixnum
+    # Create running pixel number
+    pixnum = np.asarray(range(nx)).flatten()
+
+    # Return tuple based on input parameter
+    if return_hdr:
+        return np.asarray(spectrum).flatten(), pixnum, ccd.header
+    else:
+        return np.asarray(spectrum).flatten(), pixnum
 
 
 def twodspec_apdefine(ccd, stype='star'):
