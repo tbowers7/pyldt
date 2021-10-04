@@ -46,7 +46,7 @@ import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
 # Intrapackage
-from utils import *
+from .utils import mmms
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'

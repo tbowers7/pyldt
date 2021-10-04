@@ -47,7 +47,7 @@ import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 
 # Intrapackage
-from .utils import *
+from .utils import mmms
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'
@@ -74,151 +74,151 @@ def twodspec_response(flatfn, function='spline3', order=1):
     :return: 
     """
 
-    # Available fitting functions:
-    funcs = ['spline3']
+    # # Available fitting functions:
+    # funcs = ['spline3']
 
-    # Read in the calibrated image from disk
-    ccd = CCDData.read(flatfn)
-    print(f"Shape of ccd: {ccd.shape}")
-    ny, nx = ccd.shape
-    print(f"nx = {nx}, ny = {ny}")
+    # # Read in the calibrated image from disk
+    # ccd = CCDData.read(flatfn)
+    # print(f"Shape of ccd: {ccd.shape}")
+    # ny, nx = ccd.shape
+    # print(f"nx = {nx}, ny = {ny}")
 
-    # Collapse the spatial dimension
-    spec = block_reduce(ccd, [ny,1], func=np.mean).flatten()
-    print(f"Shape of spec: {spec.shape}")
+    # # Collapse the spatial dimension
+    # spec = block_reduce(ccd, [ny,1], func=np.mean).flatten()
+    # print(f"Shape of spec: {spec.shape}")
 
-    # Compute the running pixel numbers for the abscissa
-    pixnum = np.asarray(range(nx), dtype=int)    
+    # # Compute the running pixel numbers for the abscissa
+    # pixnum = np.asarray(range(nx), dtype=int)    
     
 
-    #=========================================================================
-    # Create GUI to interactively fit the response
+    # #=========================================================================
+    # # Create GUI to interactively fit the response
 
-    # Color scheme
-    sg.theme('purple')
+    # # Color scheme
+    # sg.theme('purple')
 
-    # Window layout
-    row1 = [sg.Canvas(size=(600,350), key='-PLOT-'), 
-            sg.Canvas(size=(600,350), key='-RESID-')]
-    row2 = [sg.Text("Fit Function:"), 
-            sg.Drop(values=(funcs),auto_size_text=True,
-                    default_value=funcs[0],key='function'), 
-            sg.Text("      Order of Fit:"), 
-            sg.Input(key='-ORDER-',size=(6,1)), 
-            sg.Button("Fit"), sg.Button("Apply"), sg.Button("Quit")]
-    row3 = [sg.Text(size=(50,1), key='-MESSAGE-', text_color='dark red')]
+    # # Window layout
+    # row1 = [sg.Canvas(size=(600,350), key='-PLOT-'), 
+    #         sg.Canvas(size=(600,350), key='-RESID-')]
+    # row2 = [sg.Text("Fit Function:"), 
+    #         sg.Drop(values=(funcs),auto_size_text=True,
+    #                 default_value=funcs[0],key='function'), 
+    #         sg.Text("      Order of Fit:"), 
+    #         sg.Input(key='-ORDER-',size=(6,1)), 
+    #         sg.Button("Fit"), sg.Button("Apply"), sg.Button("Quit")]
+    # row3 = [sg.Text(size=(50,1), key='-MESSAGE-', text_color='dark red')]
 
-    # Create the Window
-    window = sg.Window(
-             "twodspec.response fit",
-             [row1, row2, row3],
-             location=(0,0),
-             finalize=True,
-             element_justification="center",
-             font="Helvetica 14")
+    # # Create the Window
+    # window = sg.Window(
+    #          "twodspec.response fit",
+    #          [row1, row2, row3],
+    #          location=(0,0),
+    #          finalize=True,
+    #          element_justification="center",
+    #          font="Helvetica 14")
 
-    # Create the basic figues
-    ptitle = f"{ccd.header['OBSTYPE']} -- Grating: {ccd.header['GRAT_ID']}" + \
-        f"   Grangle: {ccd.header['GRANGLE']}"
+    # # Create the basic figues
+    # ptitle = f"{ccd.header['OBSTYPE']} -- Grating: {ccd.header['GRAT_ID']}" + \
+    #     f"   Grangle: {ccd.header['GRANGLE']}"
 
-    fig, ax = plt.subplots(figsize=(6,4))
-    ax.plot(pixnum,spec, label="Data")
-    ax.set_ylim(ymin=0)
-    plt.xlabel('Colunmn #')
-    plt.ylabel('Mean Value (DN)')
-    plt.legend(loc='upper left')
-    plt.title(ptitle)
+    # fig, ax = plt.subplots(figsize=(6,4))
+    # ax.plot(pixnum,spec, label="Data")
+    # ax.set_ylim(ymin=0)
+    # plt.xlabel('Colunmn #')
+    # plt.ylabel('Mean Value (DN)')
+    # plt.legend(loc='upper left')
+    # plt.title(ptitle)
  
-    # Add the plot to the window
-    fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
-    fig_aggr = None
-    window['-MESSAGE-'].update("Enter order of fitting function to proceed")
+    # # Add the plot to the window
+    # fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
+    # fig_aggr = None
+    # window['-MESSAGE-'].update("Enter order of fitting function to proceed")
 
-    flat_fit = None
+    # flat_fit = None
 
-    # Run the window
-    while True:
+    # # Run the window
+    # while True:
 
-        # On event, read it in
-        event, values = window.read()
+    #     # On event, read it in
+    #     event, values = window.read()
 
-        if event == sg.WIN_CLOSED or event == 'Quit':
-            break
+    #     if event == sg.WIN_CLOSED or event == 'Quit':
+    #         break
 
-        elif event == 'Fit':
-            function = values["function"]
-            try:
-                order = int(values["-ORDER-"])
-            except ValueError:
-                window['-MESSAGE-'].update(
-                    "Please enter an integer for the order.")
-                continue
+    #     elif event == 'Fit':
+    #         function = values["function"]
+    #         try:
+    #             order = int(values["-ORDER-"])
+    #         except ValueError:
+    #             window['-MESSAGE-'].update(
+    #                 "Please enter an integer for the order.")
+    #             continue
             
-            # Parse out fitting function
-            if function == 'spline3':
-                print("Fitting cubic spline to the data")
+    #         # Parse out fitting function
+    #         if function == 'spline3':
+    #             print("Fitting cubic spline to the data")
 
-                # Fit the spline3 with specified order
-                flat_fit, knots, errmsg = spline3(pixnum, spec, order)
+    #             # Fit the spline3 with specified order
+    #             flat_fit, knots, errmsg = spline3(pixnum, spec, order)
 
-                # Print error message to window if not blank
-                if errmsg != '':
-                    window['-MESSAGE-'].update(
-                        errmsg)
-                    continue
+    #             # Print error message to window if not blank
+    #             if errmsg != '':
+    #                 window['-MESSAGE-'].update(
+    #                     errmsg)
+    #                 continue
 
-            else:
-                print("Only 'spline3' currently implemented.  Try again.")
+    #         else:
+    #             print("Only 'spline3' currently implemented.  Try again.")
 
-            # Redraw the figures
-            fig, ax = plt.subplots(figsize=(6,4))
-            ax.plot(pixnum,spec, label="Data")
-            ax.plot(pixnum,flat_fit, 'r-', label="Fit")
-            ax.set_ylim(ymin=0)
-            plt.vlines(knots, 0, np.max(spec), 'lightgray', linestyles='dashed')
-            plt.xlabel('Colunmn #')
-            plt.ylabel('Mean Value (DN)')
-            plt.legend(loc='upper left')
-            plt.title(ptitle)
+    #         # Redraw the figures
+    #         fig, ax = plt.subplots(figsize=(6,4))
+    #         ax.plot(pixnum,spec, label="Data")
+    #         ax.plot(pixnum,flat_fit, 'r-', label="Fit")
+    #         ax.set_ylim(ymin=0)
+    #         plt.vlines(knots, 0, np.max(spec), 'lightgray', linestyles='dashed')
+    #         plt.xlabel('Colunmn #')
+    #         plt.ylabel('Mean Value (DN)')
+    #         plt.legend(loc='upper left')
+    #         plt.title(ptitle)
 
-            if fig_agg is not None:
-                delete_fig_agg(fig_agg)
-            fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
+    #         if fig_agg is not None:
+    #             delete_fig_agg(fig_agg)
+    #         fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
 
-            figr, axr = plt.subplots(figsize=(6,4))
-            axr.plot(pixnum,spec/flat_fit, 'r-', label="Ratio")
-            axr.plot(pixnum,spec/spec, 'b--')
-            plt.xlabel('Colunmn #')
-            plt.ylabel('Ratio')
-            plt.legend(loc='upper left')
-            lower, upper = plt.ylim()
-            print(f"Y limits: {lower} {upper}")
-            print(f"Proposed upper Y limit: {np.maximum(0.2, lower)}")
-            print(f"Proposed lower Y limit: {np.minimum(5, upper)}")
-            axr.set_ylim(ymax=np.minimum(2, upper), 
-                            ymin=np.maximum(0.5, lower))
-            lower, upper = plt.ylim()
-            plt.vlines(knots, lower, upper, 'lightgray', linestyles='dashed')
-            plt.title(f"Residual plot for {function}, order: {order}")
+    #         figr, axr = plt.subplots(figsize=(6,4))
+    #         axr.plot(pixnum,spec/flat_fit, 'r-', label="Ratio")
+    #         axr.plot(pixnum,spec/spec, 'b--')
+    #         plt.xlabel('Colunmn #')
+    #         plt.ylabel('Ratio')
+    #         plt.legend(loc='upper left')
+    #         lower, upper = plt.ylim()
+    #         print(f"Y limits: {lower} {upper}")
+    #         print(f"Proposed upper Y limit: {np.maximum(0.2, lower)}")
+    #         print(f"Proposed lower Y limit: {np.minimum(5, upper)}")
+    #         axr.set_ylim(ymax=np.minimum(2, upper), 
+    #                         ymin=np.maximum(0.5, lower))
+    #         lower, upper = plt.ylim()
+    #         plt.vlines(knots, lower, upper, 'lightgray', linestyles='dashed')
+    #         plt.title(f"Residual plot for {function}, order: {order}")
 
-            if fig_aggr is not None:
-                delete_fig_agg(fig_aggr)
-            fig_aggr = draw_figure(window["-RESID-"].TKCanvas, figr)
+    #         if fig_aggr is not None:
+    #             delete_fig_agg(fig_aggr)
+    #         fig_aggr = draw_figure(window["-RESID-"].TKCanvas, figr)
 
-            window['-MESSAGE-'].update(
-                "Refit if necessary, or click 'Apply' to divide the flat.")
+    #         window['-MESSAGE-'].update(
+    #             "Refit if necessary, or click 'Apply' to divide the flat.")
 
-        elif event == 'Apply':
+    #     elif event == 'Apply':
 
-            # Do the division of ccd and save to file
-            if flat_fit is None:
-                window['-MESSAGE-'].update(
-                    "You must attempt a fit before applying.")
-            else:
-                print("Doing the division now... quitting.")
-                break
+    #         # Do the division of ccd and save to file
+    #         if flat_fit is None:
+    #             window['-MESSAGE-'].update(
+    #                 "You must attempt a fit before applying.")
+    #         else:
+    #             print("Doing the division now... quitting.")
+    #             break
 
-    window.close()
+    # window.close()
 
 
 def twodspec_apextract(file_name, stype='model', write_1d=True,
@@ -314,51 +314,52 @@ def twodspec_apdefine(ccd, stype='star'):
 
 
 def twodspec_identify():
-    # Open the example file
-    spectrum2D = fits.open("20201003.0038b_comb_1d.fits")[0].data
-    npix = spectrum2D.shape[1]
+    pass
+    # # Open the example file
+    # spectrum2D = fits.open("20201003.0038b_comb_1d.fits")[0].data
+    # npix = spectrum2D.shape[1]
 
-    # Get the median along the spectral direction
-    spectrum = np.median(spectrum2D, axis=0)
+    # # Get the median along the spectral direction
+    # spectrum = np.median(spectrum2D, axis=0)
 
-    print(spectrum.shape)
+    # print(spectrum.shape)
 
-    # Load the Lines from library
-    atlas = load_calibration_lines(elements=["Ne","Ar","Hg","Cd"])
+    # # Load the Lines from library
+    # atlas = load_calibration_lines(elements=["Ne","Ar","Hg","Cd"])
 
-    #print(atlas)
+    # #print(atlas)
 
-    # Get the spectral lines
-    peaks, _ = find_peaks(spectrum)
+    # # Get the spectral lines
+    # peaks, _ = find_peaks(spectrum)
 
-    print(peaks)
-    print(peaks[1:] - peaks[:-1])
+    # print(peaks)
+    # print(peaks[1:] - peaks[:-1])
 
-    print(type(peaks),type(atlas))
-
-
-    pixnum = np.arange(npix)  # Running pixel number
-    ## Figure!
-    fig, ax = plt.subplots(figsize=(6.5, 4))
-    ax.plot(pixnum,np.transpose(spectrum))
-    #ax.plot(pixnum,flat_fit,'r-')
-    ax.set_ylim(ymin=0)
-    #plt.title(file_name)
-    plt.show()
+    # print(type(peaks),type(atlas))
 
 
-
+    # pixnum = np.arange(npix)  # Running pixel number
+    # ## Figure!
+    # fig, ax = plt.subplots(figsize=(6.5, 4))
+    # ax.plot(pixnum,np.transpose(spectrum))
+    # #ax.plot(pixnum,flat_fit,'r-')
+    # ax.set_ylim(ymin=0)
+    # #plt.title(file_name)
+    # plt.show()
 
 
 
-    # Set up the Calibrator object
-    c = Calibrator(peaks, npix)
 
-    # Solve for the wavelength calibration
-    best_p = c.fit()
 
-    # Produce the diagnostic plot
-    c.plot_fit(spectrum, best_p)
+
+    # # Set up the Calibrator object
+    # c = Calibrator(peaks, npix)
+
+    # # Solve for the wavelength calibration
+    # best_p = c.fit()
+
+    # # Produce the diagnostic plot
+    # c.plot_fit(spectrum, best_p)
 
 
 
