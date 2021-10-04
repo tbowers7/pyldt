@@ -132,3 +132,6 @@ dmypy.json
 .idea/
 .vscode/
 PyLDT.code-workspace
+
+# SOFIA
+SOFIACruiseTools/

@@ -79,6 +79,8 @@ def astrometry_net(img_fn):
     with fits.open(img_fn) as hdul:
 
         w = WCS(wcs_header)
+        print(f"\n{w}")
+
         hdul[0].header.update(w.to_header())
-        print(hdul[0].header)
-    
+        print(f"\n{hdul[0].header}")
+        hdul.flush()
