@@ -34,31 +34,21 @@ from pathlib import Path
 import shutil
 import warnings
 
-# Numpy
-import numpy as np
-
-# Astropy and CCDPROC
+# 3rd Party Libraries
 from astropy.modeling import models
 from astropy.nddata import CCDData
 from astropy.stats import mad_std
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
+import numpy as np
 
 # Intrapackage
 from .utils import mmms
 
-# Boilerplate variables
-__author__ = 'Timothy P. Ellsworth Bowers'
-__copyright__ = 'Copyright 2021'
-__credits__ = ['Lowell Observatory']
-__license__ = 'MPL-2.0'
-__version__ = '0.2.0'
-__email__ = 'tbowers@lowell.edu'
-__status__ = 'Development Status :: 3 - Alpha'
-
 # Global Variables
 PKG_NAME = 'PyLDT '+'='*55      # For header metadata printing
+
 
 class _ImageDirectory:
     """Internal class, parent of LMI & DeVeny.

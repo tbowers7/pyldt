@@ -16,21 +16,13 @@ There are some utility functions here...
 """
 
 # Built-In Libraries
-from __future__ import division, print_function, absolute_import
 
 # Third-Party Libraries
 import numpy as np
 # from patsy import dmatrix, PatsyError
 # import statsmodels.api as sm
 
-# Boilerplate variables
-__author__ = 'Timothy P. Ellsworth Bowers'
-__copyright__ = 'Copyright 2021'
-__credits__ = ['Lowell Observatory']
-__license__ = 'MPL-2.0'
-__version__ = '0.2.0'
-__email__ = 'tbowers@lowell.edu'
-__status__ = 'Development Status :: 2 - Pre-Alpha'
+# Intrapackage
 
 
 def mmms(image):

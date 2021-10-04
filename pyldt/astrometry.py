@@ -20,38 +20,15 @@ Astrometry.Net
 """
 
 # Built-In Libraries
-from datetime import datetime
-import glob
-import os
-from pathlib import Path
-import shutil
-import warnings
 
-# Numpy
-import numpy as np
-
-# Astropy and CCDPROC
-from astropy.io import fits
+# 3rd Party Libraries
 from astropy.nddata import CCDData
-from astropy.stats import mad_std
 from astropy.wcs import WCS
-from astropy.utils.exceptions import AstropyWarning
 from astroquery.astrometry_net import AstrometryNet
 from astroquery.exceptions import TimeoutError
-import ccdproc as ccdp
-from ccdproc.utils.slices import slice_from_string
 
 # Intrapackage
-#rom .utils import *
 
-# Boilerplate variables
-__author__ = 'Timothy P. Ellsworth Bowers'
-__copyright__ = 'Copyright 2021'
-__credits__ = ['Lowell Observatory']
-__license__ = 'MPL-2.0'
-__version__ = '0.2.0'
-__email__ = 'tbowers@lowell.edu'
-__status__ = 'Development Status :: 3 - Alpha'
 
 def astrometry_net(img_fn):
 
@@ -72,15 +49,19 @@ def astrometry_net(img_fn):
                                                     solve_timeout=120)
         except TimeoutError as e:
             submission_id = e.args[1]
+        except ConnectionError:
+            pass
         else:
             # Got a result: Terminate
             try_again = False
     
-    with fits.open(img_fn) as hdul:
+    ccd = CCDData.read(img_fn)
 
-        w = WCS(wcs_header)
-        print(f"\n{w}")
+    print(f"\n{wcs_header}")
 
-        hdul[0].header.update(w.to_header())
-        print(f"\n{hdul[0].header}")
-        hdul.flush()
+    w = WCS(wcs_header)
+    print(f"\n{w}")
+
+    ccd.header.update(w.to_header())
+    print(f"\n{ccd.header}")
+    ccd.write(img_fn, overwrite=True)
