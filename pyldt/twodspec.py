@@ -22,32 +22,20 @@ namesakes.
 
 # Built-In Libraries
 from __future__ import division, print_function, absolute_import
-from datetime import datetime
-import glob
 import os
-from pathlib import Path
-import shutil
-import sys
 import warnings
 
 # Numpy & Similar
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import numpy as np
-import PySimpleGUI as sg
-from scipy.signal import find_peaks
 
 # Astropy and CCDPROC
-from astropy.io import fits
-from astropy.modeling import models
-from astropy.nddata import CCDData, block_reduce
-from astropy.stats import mad_std
+from astropy.nddata import CCDData
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
-from ccdproc.utils.slices import slice_from_string
 
 # Intrapackage
-from .utils import mmms
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'
@@ -65,13 +53,13 @@ warnings.simplefilter('ignore', AstropyWarning)
 warnings.simplefilter('ignore', UserWarning)
 
 
-def twodspec_response(flatfn, function='spline3', order=1):
+def twodspec_response():#flatfn, function='spline3', order=1):
     """Do something like IRAF's twodspec.longlist.response()
 
     :param flatfn: Filename of the calibrated flat field image to be reponse'd.
     :param function: Fitting function
     :param order: Order of fitting function [Default: 1]
-    :return: 
+    :return:
     """
 
     # # Available fitting functions:
@@ -88,8 +76,8 @@ def twodspec_response(flatfn, function='spline3', order=1):
     # print(f"Shape of spec: {spec.shape}")
 
     # # Compute the running pixel numbers for the abscissa
-    # pixnum = np.asarray(range(nx), dtype=int)    
-    
+    # pixnum = np.asarray(range(nx), dtype=int)
+
 
     # #=========================================================================
     # # Create GUI to interactively fit the response
@@ -98,13 +86,13 @@ def twodspec_response(flatfn, function='spline3', order=1):
     # sg.theme('purple')
 
     # # Window layout
-    # row1 = [sg.Canvas(size=(600,350), key='-PLOT-'), 
+    # row1 = [sg.Canvas(size=(600,350), key='-PLOT-'),
     #         sg.Canvas(size=(600,350), key='-RESID-')]
-    # row2 = [sg.Text("Fit Function:"), 
+    # row2 = [sg.Text("Fit Function:"),
     #         sg.Drop(values=(funcs),auto_size_text=True,
-    #                 default_value=funcs[0],key='function'), 
-    #         sg.Text("      Order of Fit:"), 
-    #         sg.Input(key='-ORDER-',size=(6,1)), 
+    #                 default_value=funcs[0],key='function'),
+    #         sg.Text("      Order of Fit:"),
+    #         sg.Input(key='-ORDER-',size=(6,1)),
     #         sg.Button("Fit"), sg.Button("Apply"), sg.Button("Quit")]
     # row3 = [sg.Text(size=(50,1), key='-MESSAGE-', text_color='dark red')]
 
@@ -128,7 +116,7 @@ def twodspec_response(flatfn, function='spline3', order=1):
     # plt.ylabel('Mean Value (DN)')
     # plt.legend(loc='upper left')
     # plt.title(ptitle)
- 
+
     # # Add the plot to the window
     # fig_agg = draw_figure(window["-PLOT-"].TKCanvas, fig)
     # fig_aggr = None
@@ -153,7 +141,7 @@ def twodspec_response(flatfn, function='spline3', order=1):
     #             window['-MESSAGE-'].update(
     #                 "Please enter an integer for the order.")
     #             continue
-            
+
     #         # Parse out fitting function
     #         if function == 'spline3':
     #             print("Fitting cubic spline to the data")
@@ -195,7 +183,7 @@ def twodspec_response(flatfn, function='spline3', order=1):
     #         print(f"Y limits: {lower} {upper}")
     #         print(f"Proposed upper Y limit: {np.maximum(0.2, lower)}")
     #         print(f"Proposed lower Y limit: {np.minimum(5, upper)}")
-    #         axr.set_ylim(ymax=np.minimum(2, upper), 
+    #         axr.set_ylim(ymax=np.minimum(2, upper),
     #                         ymin=np.maximum(0.5, lower))
     #         lower, upper = plt.ylim()
     #         plt.vlines(knots, lower, upper, 'lightgray', linestyles='dashed')
@@ -236,10 +224,10 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
     :return: spectrum, pixnum [,header] (Spectrum, Pixel Number [,FITS header])
     """
 
-    # Check for existance of file        
+    # Check for existance of file
     if not os.path.isfile(file_name):
         print("File either does not exist or cannot be read.")
-        return
+        return None
 
     # Read in said file
     ccd = CCDData.read(file_name)
@@ -262,10 +250,9 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
         #   to get the full wsize elements for the average
         for i in range(nx):
             spectrum.data[0,i] = np.average(
-                ccd.data[int(trace[i]) - halfwin : 
+                ccd.data[int(trace[i]) - halfwin :
                          int(trace[i]) + halfwin + 1, i])
-        
-        
+
     else:
         pass
 
@@ -282,8 +269,7 @@ def twodspec_apextract(file_name, stype='model', write_1d=True,
     # Return tuple based on input parameter
     if return_hdr:
         return np.asarray(spectrum).flatten(), pixnum, ccd.header
-    else:
-        return np.asarray(spectrum).flatten(), pixnum
+    return np.asarray(spectrum).flatten(), pixnum
 
 
 def twodspec_apdefine(ccd, stype='star'):
@@ -314,7 +300,10 @@ def twodspec_apdefine(ccd, stype='star'):
 
 
 def twodspec_identify():
-    pass
+    """twodspec_identify [summary]
+
+    [extended_summary]
+    """
     # # Open the example file
     # spectrum2D = fits.open("20201003.0038b_comb_1d.fits")[0].data
     # npix = spectrum2D.shape[1]
@@ -365,7 +354,10 @@ def twodspec_identify():
 
 
 def twodspec_reidentify():
-    pass
+    """twodspec_reidentify [summary]
+
+    [extended_summary]
+    """
 
 
 
@@ -374,6 +366,22 @@ def twodspec_reidentify():
 # Graphics helper functions
 
 def draw_figure(canvas, figure):
+    """draw_figure [summary]
+
+    [extended_summary]
+
+    Parameters
+    ----------
+    canvas : [type]
+        [description]
+    figure : [type]
+        [description]
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
     figure_canvas_agg = FigureCanvasTkAgg(figure, canvas)
     figure_canvas_agg.draw()
     figure_canvas_agg.get_tk_widget().pack(side="top", fill="both", expand=1)
@@ -381,5 +389,14 @@ def draw_figure(canvas, figure):
 
 
 def delete_fig_agg(fig_agg):
+    """delete_fig_agg [summary]
+
+    [extended_summary]
+
+    Parameters
+    ----------
+    fig_agg : [type]
+        [description]
+    """
     fig_agg.get_tk_widget().forget()
     plt.close('all')

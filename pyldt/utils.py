@@ -54,24 +54,24 @@ def mmms(image):
 #      # For the "not-a-knot" boundary condition, remove first and last knots:
 #     if bc == 'nak':
 #         knots = knots[1:-1]
-    
+
 #     # Select the type of cublic spline fit:
 #     if ftype == 'bs':
 #         # B-Spline
- 
+
 #         # Create the string of knot values to pass to dmatrix (from patsy)
 #         knot_str = '('
 #         for kn in knots:
 #             knot_str += f'{kn},'
 #         knot_str = knot_str[:-1]+')'
-    
+
 #         # Print statement
 #         if debug:
 #             print(f"The knot string is: >>{knot_str}<<")
 
 #         # Fit the B-Spline with specified knots
 #         x_bs = dmatrix(f'bs(x, knots={knot_str}, degree=3)', {'x': xs})
-        
+
 #         # Fit Generalized Linear Model on the transformed dataset
 #         fit_bs = sm.GLM(ys, x_bs).fit()
 
@@ -86,7 +86,7 @@ def mmms(image):
 #             x_cr = dmatrix(f'cr(x, df={order-1})', {'x': xs})
 
 #             # Fit Generalized Linear Model on transformed dataset
-#             fit_cr = sm.GLM(ys, x_cr).fit()  
+#             fit_cr = sm.GLM(ys, x_cr).fit()
 
 #             # Create the spline along the spectrum
 #             fit = fit_cr.predict(dmatrix(f'cr(x, df={order-1})',{'x': xs}))
@@ -95,7 +95,7 @@ def mmms(image):
 #             print("Order too low.  Cannot compute.")
 #             errmsg = "Selected order is too small for fit."
 #             fit = None
-        
+
 #     else:
 #         print(f"Did something wrong, dude.  " + \
 #             f"Don't recognize the fit type '{ftype}'")

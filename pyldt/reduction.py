@@ -130,7 +130,7 @@ class _ImageDirectory:
                 self.biassec = ccd.header['biassec']
             if self.trimsec is None:
                 self.trimsec = ccd.header['trimsec']
-            
+
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
             if deveny:
@@ -206,7 +206,7 @@ class _ImageDirectory:
         if t_bias_cl.files:
 
             if self.debug:
-                print(f"Doing median combine now...")
+                print("Doing median combine now...")
             comb_bias = ccdp.combine(
                 [f'{self.path}/{fn}' for fn in t_bias_cl.files],
                 method='median',
@@ -470,7 +470,7 @@ class LMI(_ImageDirectory):
                         print(f'Flat correcting file {sci_fn}')
 
                     # Divide by master flat
-                    ccdp.flat_correct(ccd, master_flat, add_keyword=True)
+                    ccdp.flat_correct(ccd, master_flat)
 
                     # Update the header
                     ccd.header['flatcor'] = True
@@ -505,7 +505,7 @@ class DeVeny(_ImageDirectory):
                 The IRAF-style image region to be retained in each frame.
                 If unspecified, use the values suggested in the LMI User Manual.
         """
-        
+
         _ImageDirectory.__init__(self, path)
         self.bin_factor = 1
         self.binning = f'{self.bin_factor} {self.bin_factor}'
@@ -527,7 +527,7 @@ class DeVeny(_ImageDirectory):
             self.prefix = prefix
         if self.debug:
             print(f'Directory prefix: {self.prefix}')
-        
+
         # Define standard filenames
         self.zerofn = 'bias.fits'
 
@@ -686,7 +686,7 @@ class DeVeny(_ImageDirectory):
 # Error Classes
 class Error(Exception):
     """Base class for exceptions in this module."""
-    pass
+
 
 class InputError(Error):
     """Exception raised for errors in the input.
@@ -792,6 +792,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     if del_input:
         for f in files:
             os.remove(f'{f}')
+    return None
 
 
 def _savetime():
@@ -802,6 +803,26 @@ def _savetime():
 
 
 def trim_oscan(ccd, biassec, trimsec, model=None):
+    """trim_oscan Public function to call the private one
+
+    Seriously, why do I have this?
+
+    Parameters
+    ----------
+    ccd : [type]
+        [description]
+    biassec : [type]
+        [description]
+    trimsec : [type]
+        [description]
+    model : [type], optional
+        [description], by default None
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
     return _trim_oscan(ccd, biassec, trimsec, model=model)
 
 
@@ -835,7 +856,7 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
     yt, xt = slice_from_string(trimsec, fits_convention=True)
 
     # First trim off the top & bottom rows
-    ccd = ccdp.trim_image(ccd[yt.start:yt.stop, :], add_keyword=True)
+    ccd = ccdp.trim_image(ccd[yt.start:yt.stop, :])
 
     # Model & Subtract the overscan
     if model is None:
@@ -843,17 +864,17 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
     else:
         model = models.Chebyshev1D(1)  # Figure out how to incorporate others
     ccd = ccdp.subtract_overscan(ccd, overscan=ccd[:, xb.start:xb.stop],
-                                 median=True, model=model, add_keyword=True)
+                                 median=True, model=model)
 
     # Trim the overscan & return
-    return ccdp.trim_image(ccd[:, xt.start:xt.stop], add_keyword=True)
+    return ccdp.trim_image(ccd[:, xt.start:xt.stop])
 
 
+#===================================================================$
 def main():
     """
     This is the main body function.
     """
-    pass
 
 
 if __name__ == "__main__":
