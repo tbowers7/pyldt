@@ -50,7 +50,7 @@ def flexure_analysis(data_dir, rescan=False):
         Forcably rescan and refit the files
     """    
 
-    for grating in ['DV2']:#['DV1','DV2','DV5']:
+    for grating in ['DV1','DV2','DV5']:
 
         save_fn = f"flex_data_{grating}.fits"
 
@@ -316,7 +316,7 @@ def make_plots(t, grating):
         par, _ = optimize.curve_fit(sinusoid, xp.flatten(), yp.flatten(), p0=[1, 1, 0, 0])
         xpl = np.arange(101) * (np.max(xp) - np.min(xp)) /100. + np.min(xp)
         ypl = sinusoid(xpl, par[0], par[1], par[2], par[3])
-        label = f"El = {k[i]:.0f}"+r'$^\circ$'+f", A={par[0]:.1f} B={par[1]:.2f} C={par[2]:.1f} D={par[3]:.1f}"
+        label = f"El = {k[i]:.0f}"+r'$^\circ$'#+f", A={par[0]:.1f} B={par[1]:.2f} C={par[2]:.1f} D={par[3]:.1f}"
         ax.plot(xpl, ypl, f"C{i if i < 10 else i-10}-", label=label)
 
     ax.set_xlabel('Cassegrain Rotator Angle [deg]', fontsize=tsz)

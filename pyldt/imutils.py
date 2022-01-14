@@ -1,5 +1,32 @@
-import numpy as np
+# -*- coding: utf-8 -*-
+#
+#  This file is part of PyLDT.
+#
+#   This Source Code Form is subject to the terms of the Mozilla Public
+#   License, v. 2.0. If a copy of the MPL was not distributed with this
+#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+#  Created on 26-Oct-2020
+#
+#  @author: tbowers
+
+"""PyLDT contains image calibration routines for LDT facility instruments
+
+Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
+http://www.lowell.edu
+
+This module contains various image utility routines.
+"""
+
+# Built-In Libraries
+
+# 3rd Party Libraries
 from astropy.nddata import CCDData
+from astropy.io import fits
+import numpy as np
+
+# Internal-ish Imports
+from LDTObserverTools.obstools import deveny_grangle
 
 def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
                       objname=None):
@@ -53,10 +80,10 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
     if verbose:
         print(f"Stats on input flat... median: {np.median(flat.data)}, max: {np.max(flat.data)}")
 
-    
+
     # Start with the bais for the data
     copy.data = bias.data
-    
+
     # Define the strip for use here:
     ymin, ymax = (305, 320)
 
@@ -72,21 +99,63 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
 
 
     # Make a Gaussian in y to apply to the strip to make it look stellar
-    y = np.arange(15)
-    g = np.exp(-(y-7)**2/6)
+    y_arr = np.arange(15)
+    g_arr = np.exp(-(y_arr-7)**2/6)
     if verbose:
         pass#print(f"Gaussian g: {g}")
 
     # Apply the gaussian to the strip
-    strip2 = strip * g.reshape(len(g),1)
-    
+    strip2 = strip * g_arr.reshape(len(g_arr),1)
+
     # Put the gaussian-ed strip into the copy
     copy.data[ymin:ymax,:] = strip2 +  base
-    
+
     # Write the thing to the outfile
     copy.write(f"{copy.header['filename'].split('/')[-1]}", overwrite=True)
-   
 
-# Driver if file called directly
-if __name__ == '__main__':
-    make_flat_as_star()
+
+def load_pypeit_flat(filename, lcen=None, gpmm=None):
+    """load_pypeit_flat Load a PypeIt Master Flat into CCDData objects
+
+    Data analysis / debugging function
+
+    Parameters
+    ----------
+    filename : `str`
+        Filename of the MasterFlat file to read in
+    lcen : `float`, optional
+        Centeral wavelength of the grating setup [Default: None]
+    gpmm : `float` or `int`, optional
+        Lines per mm on the grating installed [Default: None]
+
+    Returns
+    -------
+    `dict`
+        Dictionary containing the various Flat products for ease of use
+    """
+    with fits.open(filename) as hdul:
+
+        flat_dict = {}
+        for hdu in hdul:
+            if 'EXTNAME' in hdu.header:
+                flat_dict[hdu.header['EXTNAME']] = hdu.data
+
+        if lcen and gpmm:
+            grangle, _ = deveny_grangle.compute_grangle(gpmm, lcen)
+            flat_dict['GRANGLE'] = grangle
+
+    return flat_dict
+
+
+def load_pypeit_2dspec():
+    """load_pypeit_2dspec [summary]
+
+    [extended_summary]
+    """
+
+
+def load_pypeit_1dspec():
+    """load_pypeit_1dspec [summary]
+
+    [extended_summary]
+    """

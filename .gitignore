@@ -69,37 +69,16 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+doc/_build/
+doc/build/
+doc/_static
+doc/_templates
 
 # PyBuilder
 target/
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
+# Don't track the actual, real stuff like passwords and hostnames
+config/*.conf
 
 # Environments
 .env
@@ -110,28 +89,25 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# Ignore rando code dirs
+.vscode
+.code-workspace
+.VSCodeCounter
+.idea
 
-# Rope project settings
-.ropeproject
+# Stupid OS X stuff
+*.DS_Store
 
-# mkdocs documentation
-/site
+# New File Template
+newPythonFileTemplate.py
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# VSCode and PyCharm files
-.idea/
-.vscode/
-PyLDT.code-workspace
+# And HTML and FITS files created as part of the running
+*.html
+*.fits
 
 # SOFIA
 SOFIACruiseTools/
+
+# Plot output
+.eps
+.png

@@ -14,6 +14,7 @@
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
+
 The high-level image calibration routines in this module are designed for easy
 and simple-minded calibration of images from the LDT's facility instruments.
 
@@ -26,7 +27,6 @@ software of your choosing.
 """
 
 # Built-In Libraries
-from __future__ import division, print_function, absolute_import
 from datetime import datetime
 import glob
 import os
@@ -43,11 +43,11 @@ import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 import numpy as np
 
-# Intrapackage
+# Internal Imports
 from .utils import mmms
 
 # Global Variables
-PKG_NAME = 'PyLDT '+'='*55      # For header metadata printing
+PKG_NAME = f"PyLDT {'='*55}"      # For header metadata printing
 
 
 class _ImageDirectory:
@@ -55,7 +55,6 @@ class _ImageDirectory:
     Contains collective metadata for a single night's data images.  This
     parent class is modified for specific differences between LMI and DeVeny.
     """
-
 
     def __init__(self, path, debug=True, show_warnings=False):
         """__init__: Initialize the internal _ImageDirectory class.
@@ -89,7 +88,6 @@ class _ImageDirectory:
         self.zerofn = 'bias.fits'
         # Create Placeholder for initial ImageFileCollection for the directory
         self._file_cl = None
-
 
     def _inspectimages(self, binning=None, deveny=False):
         """Inspect the images in the specified directory
@@ -138,8 +136,9 @@ class _ImageDirectory:
                 grname = grating_ids[grating_kwds.index(ccd.header['grating'])]
                 ccd.header.set('grat_id', grname, 'Grating ID Name',
                                after='grating')
-                ccd.write(f'{self.path}/{fname}', overwrite=True)
-
+            # Fix depricated FITS keyword
+            ccd.header.rename_keyword('RADECSYS','RADESYSa')
+            ccd.write(f'{self.path}/{fname}', overwrite=True)
 
     def copy_raw(self, overwrite=False):
         """Copy raw FITS files to subdirectory 'raw' for safekeeping.
@@ -162,7 +161,6 @@ class _ImageDirectory:
             for img in glob.iglob(pattern):
                 print(f'Copying {img} to {raw_data}...')
                 shutil.copy2(img, raw_data)
-
 
     def _biascombine(self, binning=None, output="bias.fits"):
         """Finds and combines bias frames with the indicated binning
@@ -306,13 +304,13 @@ class LMI(_ImageDirectory):
         self.bin_factor = int(bin_factor)
         self.binning = f'{self.bin_factor} {self.bin_factor}'
 
-        # Set the BIASSEC and TRIMSEC appropriately FOR 2x2 BINNING
-        if self.bin_factor == 2:
-            self.biassec = '[3100:3124, 3:3079]' if biassec is None else biassec
-            self.trimsec = '[30:3094,   3:3079]' if trimsec is None else trimsec
-        else:
-            self.biassec = biassec
-            self.trimsec = trimsec
+        # # Set the BIASSEC and TRIMSEC appropriately FOR 2x2 BINNING
+        # if self.bin_factor == 2:
+        #     self.biassec = '[3100:3124, 3:3079]' if biassec is None else biassec
+        #     self.trimsec = '[30:3094,   3:3079]' if trimsec is None else trimsec
+        # else:
+        self.biassec = biassec
+        self.trimsec = trimsec
 
         # Define file prefix & standard filenames
         self.prefix = 'lmi'
@@ -491,7 +489,6 @@ class DeVeny(_ImageDirectory):
 
     """
 
-
     def __init__(self, path, biassec=None, trimsec=None, prefix=None,
                  multilamp=False):
         """__init__: Initialize DeVeny class.
@@ -547,7 +544,6 @@ class DeVeny(_ImageDirectory):
         self._file_cl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
 
-
     def process_all(self, no_flat=False, force_copy=False):
         """Process all of the images in this directory (with given binning)
         The result of running this method will be to process all of the images
@@ -568,7 +564,6 @@ class DeVeny(_ImageDirectory):
         if not no_flat:
             self.flat_combine()
 
-
     def inspect_images(self):
         """Checks that the relevant metadata is set
         Looks to ensure BIASSEC and TRIMSEC values are properly set
@@ -577,7 +572,6 @@ class DeVeny(_ImageDirectory):
         """
         self._inspectimages(self.binning, deveny=True)
 
-
     def bias_combine(self):
         """Combine the bias frames in the directory with a given binning
         Basic emulation of IRAF's zerocombine.  Produces a combined bias image
@@ -585,7 +579,6 @@ class DeVeny(_ImageDirectory):
         :return: None
         """
         self._biascombine(self.binning, output=self.zerofn)
-
 
     def flat_combine(self):
         """
@@ -696,10 +689,11 @@ class InputError(Error):
     """
 
     def __init__(self, message):
+        super().__init__()
         self.message = message
 
 
-# Non-class function definitions
+# Non-class function definitions =============================================#
 def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
               printstat=True, overwrite=True, returnccd=False):
     """Combine a collection of images
@@ -731,7 +725,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
 
     # Read in the text list inlist, if specified
     if inlist is not None:
-        with open(inlist, 'r') as f:
+        with open(inlist, 'r', encoding='utf-8') as f:
             files = []
             for line in f:
                 files.append(line.rstrip())

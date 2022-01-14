@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
 #
-#  This file is part of ______.
+#  This file is part of PyLDT.
 #
 #   This Source Code Form is subject to the terms of the Mozilla Public
 #   License, v. 2.0. If a copy of the MPL was not distributed with this
 #   file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-#  Created on 08-Jul-2021
+#  Created on 26-Oct-2020
 #
 #  @author: tbowers
 
-"""Analysis of the flexure seen in the DeVeny Spectrograph (LDT)
+"""PyLDT contains image calibration routines for LDT facility instruments
+
+Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
+http://www.lowell.edu
+
+This module contains analysis of the flexure seen in the DeVeny Spectrograph
 
 This file contains the main driver for the analysis.
 Should be run in an environment containing:
@@ -29,9 +34,10 @@ import warnings
 from astropy.table import Table
 import ccdproc as ccdp
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy import optimize
 from scipy import signal
+
+# Internal Imports
 
 
 def flexure_driver(data_dir, grating='DV2', save_fn='test.fits'):
@@ -52,7 +58,7 @@ def flexure_driver(data_dir, grating='DV2', save_fn='test.fits'):
     -------
     `astropy.table.table.Table`
         Table containing the stuffs.  [If no files found, returns None]
-    """    
+    """
      # Create an ImageFileCollection with files matching this grating;
     #  if empty, move along
     gcl = load_images(data_dir, grating)
@@ -77,9 +83,9 @@ def flexure_driver(data_dir, grating='DV2', save_fn='test.fits'):
     return table
 
 
-def load_images(data_dir, grating='DV2', obstype='comparison'):
+def load_images(data_dir, grating='DV2'):
     """load_images Load in the images associated with DATA_DIR and grating
-    
+
     [extended_summary]
 
     Parameters
@@ -95,7 +101,7 @@ def load_images(data_dir, grating='DV2', obstype='comparison'):
     -------
     `ccdproc.image_collection.ImageFileCollection`
         IFC of the files meeting the input criteria
-    """    
+    """
     # Dictionary
     gratid = {'DV1':'150/5000', 'DV2':'300/4000', 'DV5':'500/5500'}
 
@@ -129,18 +135,20 @@ def get_line_positions(icl, win=11, thresh=5000.):
     -------
     `astropy.table.table.Table`
         Table of line positions with associated metadata
-    """    
+    """
     # Put everything into a list of dicionaties
     flex_line_positions = []
 
     # This will only give the x values of the fits file.
     # For each of the images,
     for ccd, fname in icl.ccds(return_fname=True):
+        # For ease
+        hdr = ccd.header
         # Need a lower threshold for DV5 than for DV1
-        if ccd.header['grating'] == '500/5500':
+        if hdr['grating'] == '500/5500':
             thresh = 1000.
         # Check for bias frames
-        if ccd.header['exptime'] == 0:
+        if hdr['exptime'] == 0:
             continue
         print("")
         #====================
@@ -154,34 +162,28 @@ def get_line_positions(icl, win=11, thresh=5000.):
         spec1d = extract_spectrum(spec2d, trace, win)
         # Find the lines:
         centers, _ = find_lines(spec1d, thresh=thresh, minsep=17)
-        nc = len(centers)
         cen_list = [f'{cent}' for cent in centers]
-        print(f"Found {nc} Line Centers: {cen_list}")
+        print(f"Found {(nc := len(centers))} Line Centers: {cen_list}")
         #====================
 
-        # For ease
-        h = ccd.header
-        # For saving the table to disk
-        cen_str = ','.join(cen_list)
-
         flex_line_positions.append({'filename':fname,
-                                    'obserno': h['obserno'],
-                                    'telalt':h['telalt'],
-                                    'telaz':h['telaz'],
-                                    'rotangle':h['rotangle'],
-                                    'utcstart':h['utcstart'],
-                                    'lampcal':h['lampcal'],
-                                    'grating':h['grating'],
-                                    'grangle':h['grangle'],
-                                    'slitasec':h['slitasec'],
+                                    'obserno': hdr['obserno'],
+                                    'telalt':hdr['telalt'],
+                                    'telaz':hdr['telaz'],
+                                    'rotangle':hdr['rotangle'],
+                                    'utcstart':hdr['utcstart'],
+                                    'lampcal':hdr['lampcal'],
+                                    'grating':hdr['grating'],
+                                    'grangle':hdr['grangle'],
+                                    'slitasec':hdr['slitasec'],
                                     'nlines':nc,
-                                    'xpos':cen_str})
+                                    'xpos':','.join(cen_list)})
 
     t = Table(flex_line_positions)
     return t
 
 
-def validate_lines(t):
+def validate_lines(table):
     """validate_lines Validate the found lines to produce a uniform set
 
     The number of lines identified will vary form image to image.  This
@@ -190,21 +192,19 @@ def validate_lines(t):
 
     Parameters
     ----------
-    t : `astropy.table.table.Table`
+    table : `astropy.table.table.Table`
         AstroPy Table as produced by get_line_positions()
 
     Returns
     -------
     `astropy.table.table.Table`
         AstroPy Table identical to input except the lines are validated
-    """    
+    """
     print("Yay, Validation!!!!")
-    nl = t['nlines']
-    # print(f"Mean # of lines found: {np.mean(nl)}  Min: {np.min(nl)}  Max: {np.max(nl)}")
 
     # Create a variable to hold the FINAL LINES for this table
     final_lines = None
-    for row in t:
+    for row in table:
         # Line centers found for this image
         cens = np.asarray([float(c) for c in row['xpos'].split(',')])
 
@@ -214,9 +214,9 @@ def validate_lines(t):
         else:
             # Remove any canonical lines not in every image
             for line in final_lines:
-                # If nothing is in the same ballpark (say, 12 pixels), 
+                # If nothing is in the same ballpark (say, 12 pixels),
                 #   toss this canonical line
-                if np.min(np.absolute(cens - line)) > 12.: 
+                if np.min(np.absolute(cens - line)) > 12.:
                     final_lines = final_lines[final_lines != line]
 
     n_final = len(final_lines)
@@ -224,7 +224,7 @@ def validate_lines(t):
     # Go back through, and replace the `xpos` value in each row with those
     #  lines corresponding to the good final lines
     xpos = []
-    for i, row in enumerate(t):
+    for row in table:
         # Line centers found for this image
         cens = np.asarray([float(c) for c in row['xpos'].split(',')])
 
@@ -239,9 +239,9 @@ def validate_lines(t):
         # Put the array into a list to wholesale replace `xpos`
         xpos.append(np.asarray(keep_lines).flatten())
 
-    t['nlines'] = [n_final] * len(t)
-    t['xpos'] = xpos
-    return t
+    table['nlines'] = [n_final] * len(table)
+    table['xpos'] = xpos
+    return table
 
 
 def compute_line_deltas(t):
@@ -281,24 +281,9 @@ def compute_line_deltas(t):
 
 
 
-# -*- coding: utf-8 -*-
-#
-#  This file is part of ______.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
-#  Created on 08-Jul-2021
-#
-#  @author: tbowers, bshafransky
-
-"""Selected (trimmed) routines from `dfocus`
-
-These are from the pydeveny.dfocus() code, pruned for the immediate use case.
-"""
-
-
+# Selected (trimmed) routines from `dfocus` ==================================#
+#   These are from the LDTObserverTools.dfocus() code, pruned for the
+#   immediate use case.
 
 def extract_spectrum(spectrum, traces, nspix):
     """extract_spectrum Object spectral extraction routine
@@ -318,10 +303,10 @@ def extract_spectrum(spectrum, traces, nspix):
     -------
     [type]
         2-d array of spectra of individual orders
-    """    
+    """
     # Set # orders, size of each order based on traces dimensionality; 0 -> return
     if traces.ndim == 0:
-        return 0                
+        return 0
     norders, nx = (1, traces.size) if traces.ndim == 1 else traces.shape
 
     # Start out with an empty array
@@ -356,7 +341,7 @@ def gaussfit_func(x, a0, a1, a2, a3):
     -------
     [type]
         Array of y values corresponding to input a's and x
-    """    
+    """
     # Silence RuntimeWarning for overflow, this function only
     warnings.simplefilter('ignore', RuntimeWarning)
 
@@ -364,7 +349,7 @@ def gaussfit_func(x, a0, a1, a2, a3):
     return a0 * np.exp(-z**2 / 2.) + a3
 
 
-def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15, 
+def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
                verbose=False):
     """find_lines Automatically find and centroid lines in a 1-row image
 
@@ -390,13 +375,13 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
     `tuple: float, float`
         centers: List of line centers (pixel #)
         fwhm: The computed FWHM
-    """    
+    """
     # Silence OptimizeWarning, this function only
     warnings.simplefilter('ignore', optimize.OptimizeWarning)
 
     # Define the half-window
     fhalfwin = int(np.floor(fit_window/2))
- 
+
      # Get size and flatten to 1D
     _, nx = image.shape
     spec = np.ndarray.flatten(image)
@@ -412,7 +397,7 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
 
     # Step through the cut and identify peaks:
     for j in range(nx):
-        
+
         # If we get too close to the end, skip
         if j > (nx - minsep):
             continue
@@ -424,7 +409,7 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
             j1 = j
 
             # If this is too close to the last one, skip
-            if np.abs(j1 - j0) < minsep:      
+            if np.abs(j1 - j0) < minsep:
                 continue
 
             # Loop through 0-FINDMAX...  (find central pixel?)
@@ -445,7 +430,7 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
             temp = spec[xmin : xmax]
             # Filter the SPEC to smooth it a bit for fitting
             temp = signal.medfilt(temp, kernel_size=3)
-            
+
             # Run the fit, with error checking
             try:
                 p0 = [1000, np.mean(xx), 3, bkgd]
@@ -462,13 +447,13 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
             j0 = jf + j
 
     # Make list into an array, check again that the centers make sense
-    centers = np.asarray(cent)    
+    centers = np.asarray(cent)
     c_idx = np.where(np.logical_and(centers > 0, centers <= nx))
     centers = centers[c_idx]
 
     if verbose:
         print(f" Number of lines: {len(centers)}")
- 
+
     return (centers, fwhm)
 
 
@@ -490,7 +475,7 @@ def specavg(spectrum, trace, wsize):
     -------
     [type]
         One-dimensional extracted spectrum
-    """    
+    """
     # If ndim = 0, return, otherwise get nx
     if spectrum.ndim == 0:
         return 0
@@ -502,7 +487,7 @@ def specavg(spectrum, trace, wsize):
     # Because of python indexing, we need to "+1" the upper limit in order
     #   to get the full wsize elements for the average
     for i in range(nx):
-        speca[i] = np.average(spectrum[int(trace[i]) - whalfsize : 
+        speca[i] = np.average(spectrum[int(trace[i]) - whalfsize :
                                        int(trace[i]) + whalfsize + 1, i])
-    
+
     return speca.reshape((1,nx))

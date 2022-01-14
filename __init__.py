@@ -10,16 +10,8 @@
 #
 #  @author: tbowers
 
-# Silence the AstropyDeprecationWarning: 
-#    block_replicate was moved to the astropy.nddata.blocks module.
-import warnings
-from astropy.utils.exceptions import AstropyDeprecationWarning
-warnings.simplefilter('ignore', AstropyDeprecationWarning)
-
-from .pyldt.reduction import *
-from .pyldt.twodspec import *
-from .pyldt.imutils import *
-from .pyldt.astrometry import *
+"""Init File
+"""
 
 # Boilerplate variables
 __author__ = 'Timothy P. Ellsworth Bowers'
@@ -29,3 +21,10 @@ __license__ = 'MPL-2.0'
 __version__ = '0.2.0'
 __email__ = 'tbowers@lowell.edu'
 __status__ = 'Development Status :: 3 - Alpha'
+
+
+# Import the user-facing functions to make them available under pyldt
+from .pyldt.astrometry import solve_field
+from .pyldt.imutils import *
+from .pyldt.reduction import LMI, DeVeny
+from .pyldt.twodspec import *

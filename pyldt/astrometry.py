@@ -27,12 +27,12 @@ from astropy.wcs import WCS
 from astroquery.astrometry_net import AstrometryNet
 from astroquery.exceptions import TimeoutError as aqe_TimeoutError
 
-# Intrapackage
+# Internal Imports
 from .reduction import _savetime, PKG_NAME
 
 
-def astrometry_net(img_fn, debug=False):
-    """astrometry_net Get a plate solution from Astrometry.Net
+def solve_field(img_fn, debug=False):
+    """solve_field Get a plate solution from Astrometry.Net
 
     Plate solutions not only provide accurate astrometry of objects in an
     image, they can also help to identify distortions or rotations in the
@@ -47,7 +47,6 @@ def astrometry_net(img_fn, debug=False):
     """
     # Instantiate the Astrometry.Net communicator
     ast = AstrometryNet()
-    ast.api_key = "advyolesvrcrexse"
 
     # Loop variables
     try_again = True
