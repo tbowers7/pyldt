@@ -42,6 +42,7 @@ from astropy.utils.exceptions import AstropyWarning
 import ccdproc as ccdp
 from ccdproc.utils.slices import slice_from_string
 import numpy as np
+from tqdm import tqdm
 
 # Internal Imports
 from .utils import mmms
@@ -76,7 +77,7 @@ class _ImageDirectory:
         # Metadata related to all files in this directory
         self.path = path
         if self.debug:
-            print(self.path)
+            print(f"Processing images in {self.path}")
         # Attributes that need to be specified for the instrument
         self.biassec = None
         self.trimsec = None
@@ -87,7 +88,7 @@ class _ImageDirectory:
         # Generic filenames
         self.zerofn = 'bias.fits'
         # Create Placeholder for initial ImageFileCollection for the directory
-        self._file_cl = None
+        self.icl = None
 
     def _inspectimages(self, binning=None, deveny=False):
         """Inspect the images in the specified directory
@@ -111,7 +112,7 @@ class _ImageDirectory:
         if binning is None:
             raise InputError('Binning not set.')
         if self.debug:
-            print(f'Binning is: {binning}')
+            print(f"Binning is: {binning.replace(' ','x')}")
 
         if deveny:
             # Break out key/value lists for gratings
@@ -119,10 +120,14 @@ class _ImageDirectory:
             grating_kwds = list(self.gratings.values())
 
         # Refresh the ImageFileCollection
-        self._file_cl.refresh()
+        self.icl.refresh()
+
+        # Set up a progress bar, so we can see how the process is going...
+        prog_bar = tqdm(total=len(self.icl.files), unit='frame',
+                    unit_scale=False, colour='cyan')
 
         # Loop through files,
-        for ccd, fname in self._file_cl.ccds(ccdsum=binning, return_fname=True):
+        for ccd, fname in self.icl.ccds(ccdsum=binning, return_fname=True):
             # Check for empty trimsec/biassec attributes, pull from header
             if self.biassec is None:
                 self.biassec = ccd.header['biassec']
@@ -137,8 +142,14 @@ class _ImageDirectory:
                 ccd.header.set('grat_id', grname, 'Grating ID Name',
                                after='grating')
             # Fix depricated FITS keyword
-            ccd.header.rename_keyword('RADECSYS','RADESYSa')
+            if 'RADECSYS' in ccd.header:
+                ccd.header.rename_keyword('RADECSYS','RADESYSa')
             ccd.write(f'{self.path}/{fname}', overwrite=True)
+
+            # Update the progress bar
+            prog_bar.update(1)
+        # Close the progress bar, end of loop
+        prog_bar.close()
 
     def copy_raw(self, overwrite=False):
         """Copy raw FITS files to subdirectory 'raw' for safekeeping.
@@ -172,16 +183,20 @@ class _ImageDirectory:
         if binning is None:
             raise InputError('Binning not set.')
         if self.debug:
-            print(f"Combining bias frames with binning {binning} into {output}...")
+            print("Trimming and combining bias frames with binning "
+                  f"{binning.replace(' ','x')} into {output}...")
 
         # First, refresh the ImageFileCollection
-        self._file_cl.refresh()
+        self.icl.refresh()
+
+        # Set up a progress bar, so we can see how the process is going...
+        bias_files = self.icl.files_filtered(imagetyp='bias')
+        prog_bar = tqdm(total=len(bias_files), unit='frame',
+                    unit_scale=False, colour='#808080')
 
         # Loop through files,
-        for ccd, file_name in self._file_cl.ccds(ccdsum=binning,
-                                                 bitpix=16,
-                                                 imagetyp='bias',
-                                                 return_fname=True):
+        for ccd, file_name in self.icl.ccds(ccdsum=binning, imagetyp='bias',
+                                            bitpix=16, return_fname=True):
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
@@ -195,6 +210,11 @@ class _ImageDirectory:
             ccd.write(f'{self.path}/{file_name[:-5]}t{file_name[-5:]}',
                       overwrite=True)
             os.remove(f'{self.path}/{file_name}')
+
+            # Update the progress bar
+            prog_bar.update(1)
+        # Close the progress bar, end of loop
+        prog_bar.close()
 
         # Collect the trimmed biases
         t_bias_cl = ccdp.ImageFileCollection(
@@ -242,7 +262,7 @@ class _ImageDirectory:
             print("Subtracting bias from remaining images...")
 
         # Refresh the ImageFileCollection
-        self._file_cl.refresh()
+        self.icl.refresh()
 
         # Load the appropriate bias frame to subtract
         if not os.path.isfile(f'{self.path}/{self.zerofn}'):
@@ -254,12 +274,13 @@ class _ImageDirectory:
             print(f"Skipping bias subtraction for lack of {self.zerofn}")
             return
 
+        # Set up a progress bar, so we can see how the process is going...
+        prog_bar = tqdm(total=len(self.icl.files), unit='frame',
+                    unit_scale=False, colour='blue')
+
         # Loop through files,
-        for ccd, file_name in self._file_cl.ccds(ccdsum=self.binning,
-                                                 bitpix=16,
-                                                 return_fname=True):
-            if self.debug:
-                print(file_name, ccd.header['NAXIS2'], ccd.header['NAXIS1'])
+        for ccd, file_name in self.icl.ccds(ccdsum=self.binning, bitpix=16,
+                                            return_fname=True):
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
@@ -278,6 +299,11 @@ class _ImageDirectory:
             ccd.write(f'{self.path}/{file_name[:-5]}b{file_name[-5:]}',
                       overwrite=True)
             os.remove(f'{self.path}/{file_name}')
+
+            # Update the progress bar
+            prog_bar.update(1)
+        # Close the progress bar, end of loop
+        prog_bar.close()
 
 
 class LMI(_ImageDirectory):
@@ -300,7 +326,7 @@ class LMI(_ImageDirectory):
                 The binning factor used to create the image(s) to be processed.
                 [Default: 2]
         """
-        _ImageDirectory.__init__(self, path)
+        super().__init__(path)
         self.bin_factor = int(bin_factor)
         self.binning = f'{self.bin_factor} {self.bin_factor}'
 
@@ -317,7 +343,7 @@ class LMI(_ImageDirectory):
         self.zerofn = f'bias_bin{self.bin_factor}.fits'
 
         # Load initial ImageFileCollection
-        self._file_cl = ccdp.ImageFileCollection(
+        self.icl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
 
     def process_all(self):
@@ -361,29 +387,42 @@ class LMI(_ImageDirectory):
         :return: None
         """
 
-        # Load the list of bias-subtracted data frames
+        # Load the list of bias-subtracted data frames -- check binning
         bsub_cl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*b.fits')
+
+        if not bsub_cl.files:
+            print("Nothing to be done for flat_combine()!")
+            return
 
         if self.debug:
             print("Normalizing flat field frames...")
 
+        # Filter here to get # of images for progress bar
+        flat_cl = bsub_cl.filter(ccdsum=self.binning, imagetyp='[a-z]+ flat',
+                                 regex_match=True)
+        # Set up a progress bar, so we can see how the process is going...
+        prog_bar = tqdm(total=len(flat_cl.files), unit='frame',
+                    unit_scale=False, colour='yellow')
+
         # Normalize flat field images by the mean value
-        for flat_type in ['sky flat', 'dome flat']:
-            for ccd, flat_fn in bsub_cl.ccds(ccdsum=self.binning,
-                                             imagetyp=flat_type,
-                                             return_fname=True):
-                # Perform the division
-                ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
+        for ccd, flat_fn in flat_cl.ccds(return_fname=True):
+            # Perform the division
+            ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
 
-                # Update the header
-                ccd.header['HISTORY'] = 'Normalized flat saved: ' + _savetime()
-                ccd.header['HISTORY'] = f'Previous filename: {flat_fn}'
+            # Update the header
+            ccd.header['HISTORY'] = 'Normalized flat saved: ' + _savetime()
+            ccd.header['HISTORY'] = f'Previous filename: {flat_fn}'
 
-                # Save the result (suffix = 'n'); delete the input file
-                ccd.write(f'{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}',
-                          overwrite=True)
-                os.remove(f'{self.path}/{flat_fn}')
+            # Save the result (suffix = 'n'); delete the input file
+            ccd.write(f'{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}',
+                        overwrite=True)
+            os.remove(f'{self.path}/{flat_fn}')
+
+            # Update the progress bar
+            prog_bar.update(1)
+        # Close the progress bar, end of loop
+        prog_bar.close()
 
         # Load the list of normalized flat field images
         norm_cl = ccdp.ImageFileCollection(
@@ -392,7 +431,7 @@ class LMI(_ImageDirectory):
 
             # Create a unique list of the filter collection found in this set
             filters = list(norm_cl.summary['filters'])
-            unique_filters = list(set(filters))
+            unique_filters = sorted(list(set(filters)))
 
             # Combine flat field frames for each filt in unique_filters
             for filt in unique_filters:
@@ -450,7 +489,7 @@ class LMI(_ImageDirectory):
         # Check to be sure there are, indeed, flats...
         if flat_cl.files:
             # Loop through the filters present
-            for filt in list(flat_cl.summary['filters']):
+            for filt in sorted(list(flat_cl.summary['filters'])):
 
                 # Load in the master flat for this filter
                 if self.debug:
@@ -459,13 +498,15 @@ class LMI(_ImageDirectory):
                                                           filters=filt,
                                                           return_fname=True))
 
+                # Set up a progress bar, so we can see how the process is going
+                sci_filt_files = sci_cl.files_filtered(filters=filt)
+                prog_bar = tqdm(total=len(sci_filt_files), unit='frame',
+                            unit_scale=False, colour='#D8BFD8')
+
                 # Loop through the science frames to correct
                 for ccd, sci_fn in sci_cl.ccds(ccdsum=self.binning,
                                                filters=filt,
                                                return_fname=True):
-
-                    if self.debug:
-                        print(f'Flat correcting file {sci_fn}')
 
                     # Divide by master flat
                     ccdp.flat_correct(ccd, master_flat)
@@ -482,6 +523,11 @@ class LMI(_ImageDirectory):
                     ccd.write(f'{self.path}/{sci_fn[:-6]}f{sci_fn[-5:]}',
                               overwrite=True)
                     os.remove(f'{self.path}/{sci_fn}')
+
+                    # Update the progress bar
+                    prog_bar.update(1)
+                # Close the progress bar, end of loop
+                prog_bar.close()
 
 
 class DeVeny(_ImageDirectory):
@@ -503,7 +549,7 @@ class DeVeny(_ImageDirectory):
                 If unspecified, use the values suggested in the LMI User Manual.
         """
 
-        _ImageDirectory.__init__(self, path)
+        super().__init__(path)
         self.bin_factor = 1
         self.binning = f'{self.bin_factor} {self.bin_factor}'
         self.multilamp = multilamp
@@ -541,7 +587,7 @@ class DeVeny(_ImageDirectory):
                          "DV10": "2160/5000",
                          "DVxx": "UNKNOWN"}
 
-        self._file_cl = ccdp.ImageFileCollection(
+        self.icl = ccdp.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
 
     def process_all(self, no_flat=False, force_copy=False):

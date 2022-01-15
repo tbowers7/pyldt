@@ -28,6 +28,7 @@ import numpy as np
 # Internal-ish Imports
 from LDTObserverTools.obstools import deveny_grangle
 
+
 def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
                       objname=None):
     """Take a DeVeny flatfield frame and make it look like a star
