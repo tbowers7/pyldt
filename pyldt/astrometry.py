@@ -60,12 +60,10 @@ def solve_field(img_fn, debug=False):
         try:
             if not submission_id:
                 # Find objects in the image and send the list to Astrometry.Net
-                wcs_header = ast.solve_from_image(img_fn,
-                                            submission_id=submission_id)
+                wcs_header = ast.solve_from_image(img_fn, submission_id=submission_id)
             else:
                 # Subsequent times through the loop, check on the submission
-                wcs_header = ast.monitor_submission(submission_id,
-                                                    solve_timeout=120)
+                wcs_header = ast.monitor_submission(submission_id, solve_timeout=120)
         except astroquery.exceptions.TimeoutError as error:
             submission_id = error.args[1]
         except (ConnectionError, requests.exceptions.JSONDecodeError):
@@ -101,9 +99,9 @@ def solve_field(img_fn, debug=False):
     ccd.header.update(use_wcs.to_header())
 
     # Add some history information
-    ccd.header['HISTORY'] = reduction.PKG_NAME
-    ccd.header['HISTORY'] = 'Plate solution performed via astroquery.astrometry_net'
-    ccd.header['HISTORY'] = 'Solved WCS added: ' + reduction._savetime()
+    ccd.header["HISTORY"] = reduction.PKG_NAME
+    ccd.header["HISTORY"] = "Plate solution performed via astroquery.astrometry_net"
+    ccd.header["HISTORY"] = "Solved WCS added: " + reduction._savetime()
 
     if debug:
         # Print out the final header before writing to disk
@@ -135,8 +133,9 @@ def validate_solution(solved, lois, rtol=1e-05, atol=3e-07):
     `astropy.wcs.wcs.WCS`
         The WCS to use with this frame
     """
-    close = np.allclose(solved.pixel_scale_matrix, lois.pixel_scale_matrix,
-                        rtol=rtol, atol=atol)
+    close = np.allclose(
+        solved.pixel_scale_matrix, lois.pixel_scale_matrix, rtol=rtol, atol=atol
+    )
 
     print(f"\n\nIn validate_solution(), numpy sez: {close}")
     print(f"Solved:\n{solved.pixel_scale_matrix * 3600}")

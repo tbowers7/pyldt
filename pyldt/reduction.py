@@ -47,7 +47,7 @@ from tqdm import tqdm
 from pyldt import utils
 
 # Global Variables
-PKG_NAME = f"PyLDT {'='*55}"      # For header metadata printing
+PKG_NAME = f"PyLDT {'='*55}"  # For header metadata printing
 
 
 class _ImageDirectory:
@@ -70,8 +70,8 @@ class _ImageDirectory:
         self.debug = debug
         # Unless specified, suppress AstroPy warnings
         if not show_warnings:
-            warnings.simplefilter('ignore', AstropyWarning)
-            warnings.simplefilter('ignore', UserWarning)
+            warnings.simplefilter("ignore", AstropyWarning)
+            warnings.simplefilter("ignore", UserWarning)
 
         # Metadata related to all files in this directory
         self.path = path
@@ -85,7 +85,7 @@ class _ImageDirectory:
         self.binning = None
         self.gratings = None
         # Generic filenames
-        self.zerofn = 'bias.fits'
+        self.zerofn = "bias.fits"
         # Create Placeholder for initial ImageFileCollection for the directory
         self.icl = None
 
@@ -105,11 +105,11 @@ class _ImageDirectory:
 
         # Print a helpful statement that image inspection is happening
         if self.debug:
-            print('Inspecting the images in this directory...')
+            print("Inspecting the images in this directory...")
 
         # Check that binning is set
         if binning is None:
-            raise InputError('Binning not set.')
+            raise InputError("Binning not set.")
         if self.debug:
             print(f"Binning is: {binning.replace(' ','x')}")
 
@@ -122,28 +122,28 @@ class _ImageDirectory:
         self.icl.refresh()
 
         # Set up a progress bar, so we can see how the process is going...
-        prog_bar = tqdm(total=len(self.icl.files), unit='frame',
-                    unit_scale=False, colour='cyan')
+        prog_bar = tqdm(
+            total=len(self.icl.files), unit="frame", unit_scale=False, colour="cyan"
+        )
 
         # Loop through files,
         for ccd, fname in self.icl.ccds(ccdsum=binning, return_fname=True):
             # Check for empty trimsec/biassec attributes, pull from header
             if self.biassec is None:
-                self.biassec = ccd.header['biassec']
+                self.biassec = ccd.header["biassec"]
             if self.trimsec is None:
-                self.trimsec = ccd.header['trimsec']
+                self.trimsec = ccd.header["trimsec"]
 
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
             if deveny:
-                ccd.header['filtrear'] = ccd.header['filtrear'].split(' (')[0]
-                grname = grating_ids[grating_kwds.index(ccd.header['grating'])]
-                ccd.header.set('grat_id', grname, 'Grating ID Name',
-                               after='grating')
+                ccd.header["filtrear"] = ccd.header["filtrear"].split(" (")[0]
+                grname = grating_ids[grating_kwds.index(ccd.header["grating"])]
+                ccd.header.set("grat_id", grname, "Grating ID Name", after="grating")
             # Fix depricated FITS keyword
-            if 'RADECSYS' in ccd.header:
-                ccd.header.rename_keyword('RADECSYS','RADESYSa')
-            ccd.write(f'{self.path}/{fname}', overwrite=True)
+            if "RADECSYS" in ccd.header:
+                ccd.header.rename_keyword("RADECSYS", "RADESYSa")
+            ccd.write(f"{self.path}/{fname}", overwrite=True)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -157,7 +157,7 @@ class _ImageDirectory:
         :return: None
         """
 
-        raw_data = pathlib.Path(self.path, 'raw')
+        raw_data = pathlib.Path(self.path, "raw")
         if not raw_data.exists():
             raw_data.mkdir(exist_ok=True)
             new_raw = True
@@ -165,11 +165,11 @@ class _ImageDirectory:
             new_raw = False
         # Copy files to raw_data
         if new_raw or overwrite:
-            pattern = self.path + '/' + self.prefix + '.*.fits'
+            pattern = self.path + "/" + self.prefix + ".*.fits"
             if self.debug:
                 print(pattern)
             for img in glob.iglob(pattern):
-                print(f'Copying {img} to {raw_data}...')
+                print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
     def _biascombine(self, binning=None, output="bias.fits"):
@@ -180,35 +180,38 @@ class _ImageDirectory:
         :return:
         """
         if binning is None:
-            raise InputError('Binning not set.')
+            raise InputError("Binning not set.")
         if self.debug:
-            print("Trimming and combining bias frames with binning "
-                  f"{binning.replace(' ','x')} into {output}...")
+            print(
+                "Trimming and combining bias frames with binning "
+                f"{binning.replace(' ','x')} into {output}..."
+            )
 
         # First, refresh the ImageFileCollection
         self.icl.refresh()
 
         # Set up a progress bar, so we can see how the process is going...
-        bias_files = self.icl.files_filtered(imagetyp='bias')
-        prog_bar = tqdm(total=len(bias_files), unit='frame',
-                    unit_scale=False, colour='#808080')
+        bias_files = self.icl.files_filtered(imagetyp="bias")
+        prog_bar = tqdm(
+            total=len(bias_files), unit="frame", unit_scale=False, colour="#808080"
+        )
 
         # Loop through files,
-        for ccd, file_name in self.icl.ccds(ccdsum=binning, imagetyp='bias',
-                                            bitpix=16, return_fname=True):
+        for ccd, file_name in self.icl.ccds(
+            ccdsum=binning, imagetyp="bias", bitpix=16, return_fname=True
+        ):
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
 
             # Update the header
-            ccd.header['HISTORY'] = PKG_NAME
-            ccd.header['HISTORY'] = 'Trimmed bias saved: ' + _savetime()
-            ccd.header['HISTORY'] = f'Original filename: {file_name}'
+            ccd.header["HISTORY"] = PKG_NAME
+            ccd.header["HISTORY"] = "Trimmed bias saved: " + _savetime()
+            ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
             # Save the result (suffix = 't'); delete the input file
-            ccd.write(f'{self.path}/{file_name[:-5]}t{file_name[-5:]}',
-                      overwrite=True)
-            os.remove(f'{self.path}/{file_name}')
+            ccd.write(f"{self.path}/{file_name[:-5]}t{file_name[-5:]}", overwrite=True)
+            os.remove(f"{self.path}/{file_name}")
 
             # Update the progress bar
             prog_bar.update(1)
@@ -217,7 +220,8 @@ class _ImageDirectory:
 
         # Collect the trimmed biases
         t_bias_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*t.fits')
+            self.path, glob_include=f"{self.prefix}.*t.fits"
+        )
 
         # If we have a fresh list of trimmed biases to work with...
         if t_bias_cl.files:
@@ -225,30 +229,32 @@ class _ImageDirectory:
             if self.debug:
                 print("Doing median combine now...")
             comb_bias = ccdproc.combine(
-                [f'{self.path}/{fn}' for fn in t_bias_cl.files],
-                method='median',
+                [f"{self.path}/{fn}" for fn in t_bias_cl.files],
+                method="median",
                 sigma_clip=True,
                 sigma_clip_low_thresh=5,
                 sigma_clip_high_thresh=5,
                 sigma_clip_func=np.ma.median,
                 sigma_clip_dev_func=astropy.stats.mad_std,
-                mem_limit=4e9)
+                mem_limit=4e9,
+            )
 
             # Add FITS keyword NCOMBINE and HISTORY
-            comb_bias.header.set('ncombine', len(t_bias_cl.files),
-                                 '# of input images in combination')
-            comb_bias.header['HISTORY'] = 'Combined bias created: ' + \
-                                          _savetime()
-            comb_bias.header['HISTORY'] = 'Median combined ' + \
-                                          f'{len(t_bias_cl.files)} files:'
+            comb_bias.header.set(
+                "ncombine", len(t_bias_cl.files), "# of input images in combination"
+            )
+            comb_bias.header["HISTORY"] = "Combined bias created: " + _savetime()
+            comb_bias.header["HISTORY"] = (
+                "Median combined " + f"{len(t_bias_cl.files)} files:"
+            )
 
-            for f in t_bias_cl.files:
-                comb_bias.header['HISTORY'] = f
+            for fname in t_bias_cl.files:
+                comb_bias.header["HISTORY"] = fname
 
             # Save the result; delete the input files
-            comb_bias.write(f'{self.path}/{output}', overwrite=True)
-            for f in t_bias_cl.files:
-                os.remove(f'{self.path}/{f}')
+            comb_bias.write(f"{self.path}/{output}", overwrite=True)
+            for fname in t_bias_cl.files:
+                os.remove(f"{self.path}/{fname}")
 
     def bias_subtract(self):
         """
@@ -256,7 +262,7 @@ class _ImageDirectory:
         :return:
         """
         if self.binning is None:
-            raise InputError('Binning not set.')
+            raise InputError("Binning not set.")
         if self.debug:
             print("Subtracting bias from remaining images...")
 
@@ -264,22 +270,24 @@ class _ImageDirectory:
         self.icl.refresh()
 
         # Load the appropriate bias frame to subtract
-        if not os.path.isfile(f'{self.path}/{self.zerofn}'):
+        if not os.path.isfile(f"{self.path}/{self.zerofn}"):
             self._biascombine(binning=self.binning)
         try:
-            combined_bias = astropy.nddata.CCDData.read(f'{self.path}/{self.zerofn}')
+            combined_bias = astropy.nddata.CCDData.read(f"{self.path}/{self.zerofn}")
         except FileNotFoundError:
             # Just skip the bias subtraction
             print(f"Skipping bias subtraction for lack of {self.zerofn}")
             return
 
         # Set up a progress bar, so we can see how the process is going...
-        prog_bar = tqdm(total=len(self.icl.files), unit='frame',
-                    unit_scale=False, colour='blue')
+        prog_bar = tqdm(
+            total=len(self.icl.files), unit="frame", unit_scale=False, colour="blue"
+        )
 
         # Loop through files,
-        for ccd, file_name in self.icl.ccds(ccdsum=self.binning, bitpix=16,
-                                            return_fname=True):
+        for ccd, file_name in self.icl.ccds(
+            ccdsum=self.binning, bitpix=16, return_fname=True
+        ):
 
             # Fit the overscan section, subtract it, then trim the image
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
@@ -288,16 +296,14 @@ class _ImageDirectory:
             ccd = ccdproc.subtract_bias(ccd, combined_bias)
 
             # Update the header
-            ccd.header['HISTORY'] = PKG_NAME
-            ccd.header['HISTORY'] = 'Bias-subtracted image saved: ' + \
-                                    _savetime()
-            ccd.header['HISTORY'] = f'Subtracted bias: {self.zerofn}'
-            ccd.header['HISTORY'] = f'Original filename: {file_name}'
+            ccd.header["HISTORY"] = PKG_NAME
+            ccd.header["HISTORY"] = "Bias-subtracted image saved: " + _savetime()
+            ccd.header["HISTORY"] = f"Subtracted bias: {self.zerofn}"
+            ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
             # Save the result (suffix = 'b'); delete input file
-            ccd.write(f'{self.path}/{file_name[:-5]}b{file_name[-5:]}',
-                      overwrite=True)
-            os.remove(f'{self.path}/{file_name}')
+            ccd.write(f"{self.path}/{file_name[:-5]}b{file_name[-5:]}", overwrite=True)
+            os.remove(f"{self.path}/{file_name}")
 
             # Update the progress bar
             prog_bar.update(1)
@@ -306,9 +312,7 @@ class _ImageDirectory:
 
 
 class LMI(_ImageDirectory):
-    """Class call for a folder of LMI data to be calibrated.
-
-    """
+    """Class call for a folder of LMI data to be calibrated."""
 
     def __init__(self, path, biassec=None, trimsec=None, bin_factor=2):
         """__init__: Initialize LMI class.
@@ -327,7 +331,7 @@ class LMI(_ImageDirectory):
         """
         super().__init__(path)
         self.bin_factor = int(bin_factor)
-        self.binning = f'{self.bin_factor} {self.bin_factor}'
+        self.binning = f"{self.bin_factor} {self.bin_factor}"
 
         # # Set the BIASSEC and TRIMSEC appropriately FOR 2x2 BINNING
         # if self.bin_factor == 2:
@@ -338,12 +342,13 @@ class LMI(_ImageDirectory):
         self.trimsec = trimsec
 
         # Define file prefix & standard filenames
-        self.prefix = 'lmi'
-        self.zerofn = f'bias_bin{self.bin_factor}.fits'
+        self.prefix = "lmi"
+        self.zerofn = f"bias_bin{self.bin_factor}.fits"
 
         # Load initial ImageFileCollection
         self.icl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*.fits')
+            self.path, glob_include=f"{self.prefix}.*.fits"
+        )
 
     def process_all(self):
         """Process all of the images in this directory (with given binning)
@@ -388,7 +393,8 @@ class LMI(_ImageDirectory):
 
         # Load the list of bias-subtracted data frames -- check binning
         bsub_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*b.fits')
+            self.path, glob_include=f"{self.prefix}.*b.fits"
+        )
 
         if not bsub_cl.files:
             print("Nothing to be done for flat_combine()!")
@@ -398,25 +404,26 @@ class LMI(_ImageDirectory):
             print("Normalizing flat field frames...")
 
         # Filter here to get # of images for progress bar
-        flat_cl = bsub_cl.filter(ccdsum=self.binning, imagetyp='[a-z]+ flat',
-                                 regex_match=True)
+        flat_cl = bsub_cl.filter(
+            ccdsum=self.binning, imagetyp="[a-z]+ flat", regex_match=True
+        )
         # Set up a progress bar, so we can see how the process is going...
-        prog_bar = tqdm(total=len(flat_cl.files), unit='frame',
-                    unit_scale=False, colour='yellow')
+        prog_bar = tqdm(
+            total=len(flat_cl.files), unit="frame", unit_scale=False, colour="yellow"
+        )
 
         # Normalize flat field images by the mean value
         for ccd, flat_fn in flat_cl.ccds(return_fname=True):
             # Perform the division
-            ccd = ccd.divide(np.mean(ccd), handle_meta='first_found')
+            ccd = ccd.divide(np.mean(ccd), handle_meta="first_found")
 
             # Update the header
-            ccd.header['HISTORY'] = 'Normalized flat saved: ' + _savetime()
-            ccd.header['HISTORY'] = f'Previous filename: {flat_fn}'
+            ccd.header["HISTORY"] = "Normalized flat saved: " + _savetime()
+            ccd.header["HISTORY"] = f"Previous filename: {flat_fn}"
 
             # Save the result (suffix = 'n'); delete the input file
-            ccd.write(f'{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}',
-                        overwrite=True)
-            os.remove(f'{self.path}/{flat_fn}')
+            ccd.write(f"{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}", overwrite=True)
+            os.remove(f"{self.path}/{flat_fn}")
 
             # Update the progress bar
             prog_bar.update(1)
@@ -425,49 +432,50 @@ class LMI(_ImageDirectory):
 
         # Load the list of normalized flat field images
         norm_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*n.fits')
+            self.path, glob_include=f"{self.prefix}.*n.fits"
+        )
         if norm_cl.files:
 
             # Create a unique list of the filter collection found in this set
-            filters = list(norm_cl.summary['filters'])
+            filters = list(norm_cl.summary["filters"])
             unique_filters = sorted(list(set(filters)))
 
             # Combine flat field frames for each filt in unique_filters
             for filt in unique_filters:
 
-                flats = norm_cl.files_filtered(filters=filt,
-                                               include_path=True)
+                flats = norm_cl.files_filtered(filters=filt, include_path=True)
 
                 print(f"Combining flats for filter {filt}...")
-                cflat = ccdproc.combine(flats,
-                                     method='median',
-                                     sigma_clip=True,
-                                     sigma_clip_low_thresh=5,
-                                     sigma_clip_high_thresh=5,
-                                     sigma_clip_func=np.ma.median,
-                                     sigma_clip_dev_func=astropy.stats.mad_std,
-                                     mem_limit=4e9)
+                cflat = ccdproc.combine(
+                    flats,
+                    method="median",
+                    sigma_clip=True,
+                    sigma_clip_low_thresh=5,
+                    sigma_clip_high_thresh=5,
+                    sigma_clip_func=np.ma.median,
+                    sigma_clip_dev_func=astropy.stats.mad_std,
+                    mem_limit=4e9,
+                )
 
                 # Add FITS keyword NCOMBINE and HISTORY
-                cflat.header.set('ncombine', len(flats),
-                                 '# of input images in combination')
-                cflat.header['HISTORY'] = PKG_NAME
-                cflat.header['HISTORY'] = 'Combined flat created: ' + \
-                                          _savetime()
-                cflat.header['HISTORY'] = 'Median combined ' + \
-                                          f'{len(flats)} files:'
-                for fn in flats:
+                cflat.header.set(
+                    "ncombine", len(flats), "# of input images in combination"
+                )
+                cflat.header["HISTORY"] = PKG_NAME
+                cflat.header["HISTORY"] = "Combined flat created: " + _savetime()
+                cflat.header["HISTORY"] = "Median combined " + f"{len(flats)} files:"
+                for fname in flats:
                     # Remove the path portion of the filename for the HISTORY
-                    cflat.header['HISTORY'] = fn[fn.rfind('/') + 1:]
+                    cflat.header["HISTORY"] = fname[fname.rfind("/") + 1 :]
 
                 # Build filename, save, remove input files
-                flat_fn = f'flat_bin{self.bin_factor}_{filt}.fits'
+                flat_fn = f"flat_bin{self.bin_factor}_{filt}.fits"
                 if self.debug:
-                    print(f'Saving combined flat as {flat_fn}')
-                cflat.write(f'{self.path}/{flat_fn}', overwrite=True)
-                for fn in flats:
+                    print(f"Saving combined flat as {flat_fn}")
+                cflat.write(f"{self.path}/{flat_fn}", overwrite=True)
+                for fname in flats:
                     # Path name is already included
-                    os.remove(f'{fn}')
+                    os.remove(f"{fname}")
 
         else:
             print("No flats to be combined.")
@@ -480,9 +488,11 @@ class LMI(_ImageDirectory):
         """
         # Load the list of master flats and bias-subtracted data frames
         flat_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'flat_bin{self.bin_factor}_*.fits')
+            self.path, glob_include=f"flat_bin{self.bin_factor}_*.fits"
+        )
         sci_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*b.fits')
+            self.path, glob_include=f"{self.prefix}.*b.fits"
+        )
 
         # If either IFC is empty, return now
         if not sci_cl.files or not flat_cl.files:
@@ -492,40 +502,44 @@ class LMI(_ImageDirectory):
         # Check to be sure there are, indeed, flats...
         if flat_cl.files:
             # Loop through the filters present
-            for filt in sorted(list(flat_cl.summary['filters'])):
+            for filt in sorted(list(flat_cl.summary["filters"])):
 
                 # Load in the master flat for this filter
                 if self.debug:
-                    print(f'Dividing by master flat for filter: {filt}')
-                master_flat, mflat_fn = next(flat_cl.ccds(ccdsum=self.binning,
-                                                          filters=filt,
-                                                          return_fname=True))
+                    print(f"Dividing by master flat for filter: {filt}")
+                master_flat, mflat_fn = next(
+                    flat_cl.ccds(ccdsum=self.binning, filters=filt, return_fname=True)
+                )
 
                 # Set up a progress bar, so we can see how the process is going
                 sci_filt_files = sci_cl.files_filtered(filters=filt)
-                prog_bar = tqdm(total=len(sci_filt_files), unit='frame',
-                            unit_scale=False, colour='#D8BFD8')
+                prog_bar = tqdm(
+                    total=len(sci_filt_files),
+                    unit="frame",
+                    unit_scale=False,
+                    colour="#D8BFD8",
+                )
 
                 # Loop through the science frames to correct
-                for ccd, sci_fn in sci_cl.ccds(ccdsum=self.binning,
-                                               filters=filt,
-                                               return_fname=True):
+                for ccd, sci_fn in sci_cl.ccds(
+                    ccdsum=self.binning, filters=filt, return_fname=True
+                ):
 
                     # Divide by master flat
                     ccdproc.flat_correct(ccd, master_flat)
 
                     # Update the header
-                    ccd.header['flatcor'] = True
-                    ccd.header['HISTORY'] = PKG_NAME
-                    ccd.header['HISTORY'] = 'Flat-corrected image saved: ' + \
-                                            _savetime()
-                    ccd.header['HISTORY'] = f'Divided by flat: {mflat_fn}'
-                    ccd.header['HISTORY'] = f'Previous filename: {sci_fn}'
+                    ccd.header["flatcor"] = True
+                    ccd.header["HISTORY"] = PKG_NAME
+                    ccd.header["HISTORY"] = "Flat-corrected image saved: " + _savetime()
+                    ccd.header["HISTORY"] = f"Divided by flat: {mflat_fn}"
+                    ccd.header["HISTORY"] = f"Previous filename: {sci_fn}"
 
                     # Save the result (suffix = 'f'); delete the input file
-                    ccd.write(f'{self.path}/{sci_fn[:-6]}f{sci_fn[-5:]}',
-                              overwrite=True)
-                    os.remove(f'{self.path}/{sci_fn}')
+                    ccd.write(
+                        f"{self.path}/{sci_fn[:-6]}f{sci_fn[-5:]}", overwrite=True
+                    )
+                    os.remove(f"{self.path}/{sci_fn}")
 
                     # Update the progress bar
                     prog_bar.update(1)
@@ -534,12 +548,9 @@ class LMI(_ImageDirectory):
 
 
 class DeVeny(_ImageDirectory):
-    """Class call for a folder of DeVeny data to be calibrated.
+    """Class call for a folder of DeVeny data to be calibrated."""
 
-    """
-
-    def __init__(self, path, biassec=None, trimsec=None, prefix=None,
-                 multilamp=False):
+    def __init__(self, path, biassec=None, trimsec=None, prefix=None, multilamp=False):
         """__init__: Initialize DeVeny class.
         Args:
            path (:TYPE:`str`)
@@ -554,44 +565,47 @@ class DeVeny(_ImageDirectory):
 
         super().__init__(path)
         self.bin_factor = 1
-        self.binning = f'{self.bin_factor} {self.bin_factor}'
+        self.binning = f"{self.bin_factor} {self.bin_factor}"
         self.multilamp = multilamp
 
         # Set the BIASSEC and TRIMSEC appropriately
-        self.biassec = '[2101:2144,5:512]' if biassec is None else biassec
-        self.trimsec = '[54:  2096,5:512]' if trimsec is None else trimsec
+        self.biassec = "[2101:2144,5:512]" if biassec is None else biassec
+        self.trimsec = "[54:  2096,5:512]" if trimsec is None else trimsec
 
         # File prefix -- DeVeny files prefix with the UT date
         if prefix is None:
             # Look at all the 20*.fits files in this directory, and choose
             # Note: This will need to be updated for the year 2100
-            fitsfiles = glob.glob(self.path + '/' + '20*.????.fits')
+            fitsfiles = glob.glob(self.path + "/" + "20*.????.fits")
             if fitsfiles:
-                slashind = fitsfiles[0].rfind('/')
-                self.prefix = fitsfiles[0][slashind + 1:slashind + 9]
+                slashind = fitsfiles[0].rfind("/")
+                self.prefix = fitsfiles[0][slashind + 1 : slashind + 9]
         else:
             self.prefix = prefix
         if self.debug:
-            print(f'Directory prefix: {self.prefix}')
+            print(f"Directory prefix: {self.prefix}")
 
         # Define standard filenames
-        self.zerofn = 'bias.fits'
+        self.zerofn = "bias.fits"
 
         # Define the gratings
-        self.gratings = {"DV1": "150/5000",
-                         "DV2": "300/4000",
-                         "DV3": "300/6750",
-                         "DV4": "400/8500",
-                         "DV5": "500/5500",
-                         "DV6": "600/4900",
-                         "DV7": "600/6750",
-                         "DV8": "831/8000",
-                         "DV9": "1200/5000",
-                         "DV10": "2160/5000",
-                         "DVxx": "UNKNOWN"}
+        self.gratings = {
+            "DV1": "150/5000",
+            "DV2": "300/4000",
+            "DV3": "300/6750",
+            "DV4": "400/8500",
+            "DV5": "500/5500",
+            "DV6": "600/4900",
+            "DV7": "600/6750",
+            "DV8": "831/8000",
+            "DV9": "1200/5000",
+            "DV10": "2160/5000",
+            "DVxx": "UNKNOWN",
+        }
 
         self.icl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*.fits')
+            self.path, glob_include=f"{self.prefix}.*.fits"
+        )
 
     def process_all(self, no_flat=False, force_copy=False):
         """Process all of the images in this directory (with given binning)
@@ -639,7 +653,8 @@ class DeVeny(_ImageDirectory):
 
         # Load the list of bias-subtracted data frames
         bsub_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f'{self.prefix}.*b.fits')
+            self.path, glob_include=f"{self.prefix}.*b.fits"
+        )
 
         # Find just the flats
         # NOTE: When CCDPROC filters an ImgFileCol, the resulting filenames
@@ -651,76 +666,83 @@ class DeVeny(_ImageDirectory):
         if flats_cl.files:
 
             # In case more than one grating was used (unlikely except eng)
-            for grname in list(set(list(flats_cl.summary['grat_id']))):
+            for grname in list(set(list(flats_cl.summary["grat_id"]))):
 
                 # Filter the ImgFileColl to include only this grating
                 gr_cl = flats_cl.filter(grat_id=grname)
 
                 # In case more than one grating tilt angle was used (possible)
-                for gra in list(set(list(gr_cl.summary['grangle']))):
+                for gra in list(set(list(gr_cl.summary["grangle"]))):
 
                     # Filter the ImgFileColl to include only this tilt
                     gra_cl = gr_cl.filter(grangle=gra)
 
                     # In case more than one order-blocking filter was used (???)
-                    for filt in list(set(list(gra_cl.summary['filtrear']))):
+                    for filt in list(set(list(gra_cl.summary["filtrear"]))):
 
                         # Filter the ImgFileColl to include only this filter
                         filt_cl = gra_cl.filter(filtrear=filt)
 
                         # For engineering, possibly use different lamps for comp
                         if self.multilamp:
-                            lamps = list(set(list(filt_cl.summary['comment'])))
+                            lamps = list(set(list(filt_cl.summary["comment"])))
                         else:
-                            lamps = ['domelamp']
+                            lamps = ["domelamp"]
                         if self.debug:
-                            print(f'Flat lamps used: {lamps}')
+                            print(f"Flat lamps used: {lamps}")
 
                         for this_lamp in lamps:
 
                             if self.multilamp:
                                 lamp_cl = filt_cl.filter(comment=this_lamp)
-                                lname = '_TRING' if this_lamp[0:3] == 'Top' \
-                                    else '_FLOOD'
+                                lname = (
+                                    "_TRING" if this_lamp[0:3] == "Top" else "_FLOOD"
+                                )
                             else:
                                 lamp_cl = filt_cl
-                                lname = ''
+                                lname = ""
 
                             # Actually do the flat combining
-                            cflat = ccdproc.combine(lamp_cl.files,
-                                                 method='median',
-                                                 sigma_clip=True,
-                                                 sigma_clip_low_thresh=5,
-                                                 sigma_clip_high_thresh=5,
-                                                 sigma_clip_func=np.ma.median,
-                                                 sigma_clip_dev_func=astropy.stats.mad_std,
-                                                 mem_limit=4e9)
+                            cflat = ccdproc.combine(
+                                lamp_cl.files,
+                                method="median",
+                                sigma_clip=True,
+                                sigma_clip_low_thresh=5,
+                                sigma_clip_high_thresh=5,
+                                sigma_clip_func=np.ma.median,
+                                sigma_clip_dev_func=astropy.stats.mad_std,
+                                mem_limit=4e9,
+                            )
 
                             # Add FITS keyword NCOMBINE and HISTORY
-                            cflat.header.set('ncombine', len(lamp_cl.files),
-                                             '# of input images in combination')
-                            cflat.header['HISTORY'] = PKG_NAME
-                            cflat.header['HISTORY'] = 'Combined flat ' + \
-                                                      'created: ' + _savetime()
-                            cflat.header['HISTORY'] = \
-                                f'Median combined {len(lamp_cl.files)} files:'
-                            for fn in lamp_cl.files:
+                            cflat.header.set(
+                                "ncombine",
+                                len(lamp_cl.files),
+                                "# of input images in combination",
+                            )
+                            cflat.header["HISTORY"] = PKG_NAME
+                            cflat.header["HISTORY"] = (
+                                "Combined flat " + "created: " + _savetime()
+                            )
+                            cflat.header[
+                                "HISTORY"
+                            ] = f"Median combined {len(lamp_cl.files)} files:"
+                            for fname in lamp_cl.files:
                                 # Note: These filenames have the path attached,
                                 #       via the .filter() method of ImgFileCol.
                                 # Include just the pathless filename.
-                                cflat.header['HISTORY'] = fn[fn.rfind('/') + 1:]
+                                cflat.header["HISTORY"] = fname[fname.rfind("/") + 1 :]
 
                             # Build filename, save, remove input files
-                            flat_fn = f'flat_{grname}_{gra}_{filt}{lname}.fits'
+                            flat_fn = f"flat_{grname}_{gra}_{filt}{lname}.fits"
                             if self.debug:
-                                print(f'Saving combined flat as {flat_fn}')
-                            cflat.write(f'{self.path}/{flat_fn}',
-                                        overwrite=True)
-                            for fn in lamp_cl.files:
+                                print(f"Saving combined flat as {flat_fn}")
+                            cflat.write(f"{self.path}/{flat_fn}", overwrite=True)
+                            for fname in lamp_cl.files:
                                 # Note: These filenames have the path already
                                 #       attached, via the .filter() method of
                                 #       ImgFileCol.
-                                os.remove(f'{fn}')
+                                os.remove(f"{fname}")
         else:
             print("No flats to be combined.")
 
@@ -743,8 +765,16 @@ class InputError(Error):
 
 
 # Non-class function definitions =============================================#
-def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
-              printstat=True, overwrite=True, returnccd=False):
+def imcombine(
+    *infiles,
+    inlist=None,
+    outfn=None,
+    del_input=False,
+    combine=None,
+    printstat=True,
+    overwrite=True,
+    returnccd=False,
+):
     """Combine a collection of images
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
     list of images to be combined, and the result is written to disk with an
@@ -763,7 +793,7 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
 
     # Unpack the single-item tuple *infiles
     if len(infiles) > 0:
-        files, = infiles
+        (files,) = infiles
     else:
         files = []
 
@@ -774,9 +804,9 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
 
     # Read in the text list inlist, if specified
     if inlist is not None:
-        with open(inlist, 'r', encoding='utf-8') as f:
+        with open(inlist, "r", encoding="utf-8") as f_obj:
             files = []
-            for line in f:
+            for line in f_obj:
                 files.append(line.rstrip())
 
     # Check for proper file list
@@ -785,43 +815,49 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
         raise Exception()
 
     # Check that specified input files exist
-    for f in files:
-        if not os.path.isfile(f):
-            print(f"File {f} does not exist.")
+    for fname in files:
+        if not os.path.isfile(fname):
+            print(f"File {fname} does not exist.")
             raise Exception()
 
     # Determine combine method (default = 'median')
-    if combine != 'median' or combine != 'mean':
-        combine = 'median'
+    if combine != "median" or combine != "mean":
+        combine = "median"
 
     # Create an ImgFileColl using the input files
     file_cl = ccdproc.ImageFileCollection(filenames=files)
 
     if printstat:
         # Print out the statistics, for clarity
-        for img, fn in file_cl.ccds(return_fname=True):
+        for img, fname in file_cl.ccds(return_fname=True):
             mini, maxi, mean, stdv = utils.mmms(img)
-            print(f'{fn}:: Min: {mini:.2f} Max: {maxi:.2f} ' +
-                  f'Mean: {mean:.2f} Stddev: {stdv:.2f}')
+            print(
+                f"{fname}:: Min: {mini:.2f} Max: {maxi:.2f} "
+                + f"Mean: {mean:.2f} Stddev: {stdv:.2f}"
+            )
 
-    comb_img = ccdproc.combine(file_cl.files,
-                            method=combine,
-                            sigma_clip=True,
-                            sigma_clip_low_thresh=5,
-                            sigma_clip_high_thresh=5,
-                            sigma_clip_func=np.ma.median,
-                            sigma_clip_dev_func=astropy.stats.mad_std,
-                            mem_limit=4e9)
+    comb_img = ccdproc.combine(
+        file_cl.files,
+        method=combine,
+        sigma_clip=True,
+        sigma_clip_low_thresh=5,
+        sigma_clip_high_thresh=5,
+        sigma_clip_func=np.ma.median,
+        sigma_clip_dev_func=astropy.stats.mad_std,
+        mem_limit=4e9,
+    )
 
     # Add FITS keyword NCOMBINE and add HISTORY
-    comb_img.header.set('ncombine', len(file_cl.files),
-                        '# of input images in combination')
-    comb_img.header['HISTORY'] = PKG_NAME
-    comb_img.header['HISTORY'] = 'Combined image created: ' + _savetime()
-    comb_img.header['HISTORY'] = f'{combine.title()} combined ' + \
-                                 f'{len(file_cl.files)} files:'
-    for fn in file_cl.files:
-        comb_img.header['HISTORY'] = fn
+    comb_img.header.set(
+        "ncombine", len(file_cl.files), "# of input images in combination"
+    )
+    comb_img.header["HISTORY"] = PKG_NAME
+    comb_img.header["HISTORY"] = "Combined image created: " + _savetime()
+    comb_img.header["HISTORY"] = (
+        f"{combine.title()} combined " + f"{len(file_cl.files)} files:"
+    )
+    for fname in file_cl.files:
+        comb_img.header["HISTORY"] = fname
 
     # If returnccd is True, return now before thinking about saving.
     if returnccd:
@@ -829,12 +865,12 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
 
     # Build filename (if not specified in call), save, remove input files
     if outfn is None:
-        outfn = f'{files[0][:-5]}_comb{files[0][-5:]}'
-    print(f'Saving combined image as {outfn}')
-    comb_img.write(f'{outfn}', overwrite=overwrite)
+        outfn = f"{files[0][:-5]}_comb{files[0][-5:]}"
+    print(f"Saving combined image as {outfn}")
+    comb_img.write(f"{outfn}", overwrite=overwrite)
     if del_input:
-        for f in files:
-            os.remove(f'{f}')
+        for fname in files:
+            os.remove(f"{fname}")
     return None
 
 
@@ -897,25 +933,28 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
     """
 
     # Convert the FITS bias & trim sections into slice classes for use
-    yb, xb = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
+    _, xb = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
     yt, xt = ccdproc.utils.slices.slice_from_string(trimsec, fits_convention=True)
 
     # First trim off the top & bottom rows
-    ccd = ccdproc.trim_image(ccd[yt.start:yt.stop, :])
+    ccd = ccdproc.trim_image(ccd[yt.start : yt.stop, :])
 
     # Model & Subtract the overscan
     if model is None:
         model = astropy.modeling.models.Chebyshev1D(1)  # Chebyshev 1st order function
     else:
-        model = astropy.modeling.models.Chebyshev1D(1)  # Figure out how to incorporate others
-    ccd = ccdproc.subtract_overscan(ccd, overscan=ccd[:, xb.start:xb.stop],
-                                 median=True, model=model)
+        model = astropy.modeling.models.Chebyshev1D(
+            1
+        )  # Figure out how to incorporate others
+    ccd = ccdproc.subtract_overscan(
+        ccd, overscan=ccd[:, xb.start : xb.stop], median=True, model=model
+    )
 
     # Trim the overscan & return
-    return ccdproc.trim_image(ccd[:, xt.start:xt.stop])
+    return ccdproc.trim_image(ccd[:, xt.start : xt.stop])
 
 
-#===================================================================$
+# ===================================================================$
 def main():
     """
     This is the main body function.
