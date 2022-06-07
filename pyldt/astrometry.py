@@ -51,6 +51,11 @@ def solve_field(img_fn, debug=False):
         Filename of the image on which to do a plate solution
     debug : `bool`, optional
         Print debugging statements? [Default: False]
+
+    Returns
+    -------
+    `astropy.wcs.WCS`
+        The resultant WCS from the solving process
     """
     # Instantiate the Astrometry.Net communicator
     ast = astroquery.astrometry_net.AstrometryNet()
@@ -114,6 +119,7 @@ def solve_field(img_fn, debug=False):
     # Write the CCDData object to disk with the updated WCS information
     ccd.write(img_fn, overwrite=True)
 
+    return use_wcs
 
 def validate_solution(solved, lois, rtol=1e-05, atol=3e-07):
     """validate_solution Validate the Astrometry.Net plate solution
