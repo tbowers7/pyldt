@@ -31,11 +31,11 @@ import os
 import warnings
 
 # Third-Party Libraries
-from astropy.table import Table
-import ccdproc as ccdp
+import astropy.table
+import ccdproc
 import numpy as np
-from scipy import optimize
-from scipy import signal
+import scipy.optimize
+import scipy.signal
 
 # Internal Imports
 
@@ -106,7 +106,7 @@ def load_images(data_dir, grating='DV2'):
     gratid = {'DV1':'150/5000', 'DV2':'300/4000', 'DV5':'500/5500'}
 
     # Load the images of interest in to an ImageFileCollection()
-    icl = ccdp.ImageFileCollection(data_dir)
+    icl = ccdproc.ImageFileCollection(data_dir)
 
     # Clean up the telescope altitude
     for ccd, fn in icl.ccds(obstype='comparison', return_fname=True):
@@ -179,7 +179,7 @@ def get_line_positions(icl, win=11, thresh=5000.):
                                     'nlines':nc,
                                     'xpos':','.join(cen_list)})
 
-    t = Table(flex_line_positions)
+    t = astropy.table.Table(flex_line_positions)
     return t
 
 
@@ -377,7 +377,7 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
         fwhm: The computed FWHM
     """
     # Silence OptimizeWarning, this function only
-    warnings.simplefilter('ignore', optimize.OptimizeWarning)
+    warnings.simplefilter('ignore', scipy.optimize.OptimizeWarning)
 
     # Define the half-window
     fhalfwin = int(np.floor(fit_window/2))
@@ -429,12 +429,12 @@ def find_lines(image, thresh=20., findmax=50, minsep=11, fit_window=15,
             xx = np.arange(xmin, xmax, dtype=float)
             temp = spec[xmin : xmax]
             # Filter the SPEC to smooth it a bit for fitting
-            temp = signal.medfilt(temp, kernel_size=3)
+            temp = scipy.signal.medfilt(temp, kernel_size=3)
 
             # Run the fit, with error checking
             try:
                 p0 = [1000, np.mean(xx), 3, bkgd]
-                aa, _ = optimize.curve_fit(gaussfit_func, xx, temp, p0=p0)
+                aa, _ = scipy.optimize.curve_fit(gaussfit_func, xx, temp, p0=p0)
             except RuntimeError:
                 continue  # Just skip this one
 

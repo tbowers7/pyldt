@@ -27,25 +27,24 @@ software of your choosing.
 """
 
 # Built-In Libraries
-from datetime import datetime
+import datetime
 import glob
 import os
-from pathlib import Path
+import pathlib
 import shutil
 import warnings
 
 # 3rd Party Libraries
-from astropy.modeling import models
-from astropy.nddata import CCDData
-from astropy.stats import mad_std
+import astropy.modeling
+import astropy.nddata
+import astropy.stats
 from astropy.utils.exceptions import AstropyWarning
-import ccdproc as ccdp
-from ccdproc.utils.slices import slice_from_string
+import ccdproc
 import numpy as np
 from tqdm import tqdm
 
 # Internal Imports
-from .utils import mmms
+from pyldt import utils
 
 # Global Variables
 PKG_NAME = f"PyLDT {'='*55}"      # For header metadata printing
@@ -158,7 +157,7 @@ class _ImageDirectory:
         :return: None
         """
 
-        raw_data = Path(self.path, 'raw')
+        raw_data = pathlib.Path(self.path, 'raw')
         if not raw_data.exists():
             raw_data.mkdir(exist_ok=True)
             new_raw = True
@@ -217,7 +216,7 @@ class _ImageDirectory:
         prog_bar.close()
 
         # Collect the trimmed biases
-        t_bias_cl = ccdp.ImageFileCollection(
+        t_bias_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*t.fits')
 
         # If we have a fresh list of trimmed biases to work with...
@@ -225,14 +224,14 @@ class _ImageDirectory:
 
             if self.debug:
                 print("Doing median combine now...")
-            comb_bias = ccdp.combine(
+            comb_bias = ccdproc.combine(
                 [f'{self.path}/{fn}' for fn in t_bias_cl.files],
                 method='median',
                 sigma_clip=True,
                 sigma_clip_low_thresh=5,
                 sigma_clip_high_thresh=5,
                 sigma_clip_func=np.ma.median,
-                sigma_clip_dev_func=mad_std,
+                sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=4e9)
 
             # Add FITS keyword NCOMBINE and HISTORY
@@ -268,7 +267,7 @@ class _ImageDirectory:
         if not os.path.isfile(f'{self.path}/{self.zerofn}'):
             self._biascombine(binning=self.binning)
         try:
-            combined_bias = CCDData.read(f'{self.path}/{self.zerofn}')
+            combined_bias = astropy.nddata.CCDData.read(f'{self.path}/{self.zerofn}')
         except FileNotFoundError:
             # Just skip the bias subtraction
             print(f"Skipping bias subtraction for lack of {self.zerofn}")
@@ -286,7 +285,7 @@ class _ImageDirectory:
             ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
 
             # Subtract master bias
-            ccd = ccdp.subtract_bias(ccd, combined_bias)
+            ccd = ccdproc.subtract_bias(ccd, combined_bias)
 
             # Update the header
             ccd.header['HISTORY'] = PKG_NAME
@@ -343,7 +342,7 @@ class LMI(_ImageDirectory):
         self.zerofn = f'bias_bin{self.bin_factor}.fits'
 
         # Load initial ImageFileCollection
-        self.icl = ccdp.ImageFileCollection(
+        self.icl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
 
     def process_all(self):
@@ -388,7 +387,7 @@ class LMI(_ImageDirectory):
         """
 
         # Load the list of bias-subtracted data frames -- check binning
-        bsub_cl = ccdp.ImageFileCollection(
+        bsub_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*b.fits')
 
         if not bsub_cl.files:
@@ -425,7 +424,7 @@ class LMI(_ImageDirectory):
         prog_bar.close()
 
         # Load the list of normalized flat field images
-        norm_cl = ccdp.ImageFileCollection(
+        norm_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*n.fits')
         if norm_cl.files:
 
@@ -440,13 +439,13 @@ class LMI(_ImageDirectory):
                                                include_path=True)
 
                 print(f"Combining flats for filter {filt}...")
-                cflat = ccdp.combine(flats,
+                cflat = ccdproc.combine(flats,
                                      method='median',
                                      sigma_clip=True,
                                      sigma_clip_low_thresh=5,
                                      sigma_clip_high_thresh=5,
                                      sigma_clip_func=np.ma.median,
-                                     sigma_clip_dev_func=mad_std,
+                                     sigma_clip_dev_func=astropy.stats.mad_std,
                                      mem_limit=4e9)
 
                 # Add FITS keyword NCOMBINE and HISTORY
@@ -479,12 +478,16 @@ class LMI(_ImageDirectory):
         general function.  Basic emulation of IRAF's ccdproc/flatcor function.
         :return: None
         """
-
         # Load the list of master flats and bias-subtracted data frames
-        flat_cl = ccdp.ImageFileCollection(
+        flat_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'flat_bin{self.bin_factor}_*.fits')
-        sci_cl = ccdp.ImageFileCollection(
+        sci_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*b.fits')
+
+        # If either IFC is empty, return now
+        if not sci_cl.files or not flat_cl.files:
+            print("No flats and/or no science images.  Skipping flat divide...")
+            return
 
         # Check to be sure there are, indeed, flats...
         if flat_cl.files:
@@ -509,7 +512,7 @@ class LMI(_ImageDirectory):
                                                return_fname=True):
 
                     # Divide by master flat
-                    ccdp.flat_correct(ccd, master_flat)
+                    ccdproc.flat_correct(ccd, master_flat)
 
                     # Update the header
                     ccd.header['flatcor'] = True
@@ -587,7 +590,7 @@ class DeVeny(_ImageDirectory):
                          "DV10": "2160/5000",
                          "DVxx": "UNKNOWN"}
 
-        self.icl = ccdp.ImageFileCollection(
+        self.icl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*.fits')
 
     def process_all(self, no_flat=False, force_copy=False):
@@ -635,7 +638,7 @@ class DeVeny(_ImageDirectory):
             print("Combining flats...")
 
         # Load the list of bias-subtracted data frames
-        bsub_cl = ccdp.ImageFileCollection(
+        bsub_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f'{self.prefix}.*b.fits')
 
         # Find just the flats
@@ -684,13 +687,13 @@ class DeVeny(_ImageDirectory):
                                 lname = ''
 
                             # Actually do the flat combining
-                            cflat = ccdp.combine(lamp_cl.files,
+                            cflat = ccdproc.combine(lamp_cl.files,
                                                  method='median',
                                                  sigma_clip=True,
                                                  sigma_clip_low_thresh=5,
                                                  sigma_clip_high_thresh=5,
                                                  sigma_clip_func=np.ma.median,
-                                                 sigma_clip_dev_func=mad_std,
+                                                 sigma_clip_dev_func=astropy.stats.mad_std,
                                                  mem_limit=4e9)
 
                             # Add FITS keyword NCOMBINE and HISTORY
@@ -792,22 +795,22 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
         combine = 'median'
 
     # Create an ImgFileColl using the input files
-    file_cl = ccdp.ImageFileCollection(filenames=files)
+    file_cl = ccdproc.ImageFileCollection(filenames=files)
 
     if printstat:
         # Print out the statistics, for clarity
         for img, fn in file_cl.ccds(return_fname=True):
-            mini, maxi, mean, stdv = mmms(img)
+            mini, maxi, mean, stdv = utils.mmms(img)
             print(f'{fn}:: Min: {mini:.2f} Max: {maxi:.2f} ' +
                   f'Mean: {mean:.2f} Stddev: {stdv:.2f}')
 
-    comb_img = ccdp.combine(file_cl.files,
+    comb_img = ccdproc.combine(file_cl.files,
                             method=combine,
                             sigma_clip=True,
                             sigma_clip_low_thresh=5,
                             sigma_clip_high_thresh=5,
                             sigma_clip_func=np.ma.median,
-                            sigma_clip_dev_func=mad_std,
+                            sigma_clip_dev_func=astropy.stats.mad_std,
                             mem_limit=4e9)
 
     # Add FITS keyword NCOMBINE and add HISTORY
@@ -835,11 +838,13 @@ def imcombine(*infiles, inlist=None, outfn=None, del_input=False, combine=None,
     return None
 
 
-def _savetime():
+def _savetime(local=False):
     """Shortcut to return the current UT timestamp in a useful form
     :return: `str`: UT timestamp in format %Y-%m-%d %H:%M:%S
     """
-    return f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+    if local:
+        return f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} MST'
+    return f'{datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
 
 
 def trim_oscan(ccd, biassec, trimsec, model=None):
@@ -892,22 +897,22 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
     """
 
     # Convert the FITS bias & trim sections into slice classes for use
-    yb, xb = slice_from_string(biassec, fits_convention=True)
-    yt, xt = slice_from_string(trimsec, fits_convention=True)
+    yb, xb = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
+    yt, xt = ccdproc.utils.slices.slice_from_string(trimsec, fits_convention=True)
 
     # First trim off the top & bottom rows
-    ccd = ccdp.trim_image(ccd[yt.start:yt.stop, :])
+    ccd = ccdproc.trim_image(ccd[yt.start:yt.stop, :])
 
     # Model & Subtract the overscan
     if model is None:
-        model = models.Chebyshev1D(1)  # Chebyshev 1st order function
+        model = astropy.modeling.models.Chebyshev1D(1)  # Chebyshev 1st order function
     else:
-        model = models.Chebyshev1D(1)  # Figure out how to incorporate others
-    ccd = ccdp.subtract_overscan(ccd, overscan=ccd[:, xb.start:xb.stop],
+        model = astropy.modeling.models.Chebyshev1D(1)  # Figure out how to incorporate others
+    ccd = ccdproc.subtract_overscan(ccd, overscan=ccd[:, xb.start:xb.stop],
                                  median=True, model=model)
 
     # Trim the overscan & return
-    return ccdp.trim_image(ccd[:, xt.start:xt.stop])
+    return ccdproc.trim_image(ccd[:, xt.start:xt.stop])
 
 
 #===================================================================$

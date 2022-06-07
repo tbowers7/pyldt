@@ -21,12 +21,12 @@ This module contains various image utility routines.
 # Built-In Libraries
 
 # 3rd Party Libraries
-from astropy.nddata import CCDData
-from astropy.io import fits
+import astropy.nddata
+import astropy.io.fits
 import numpy as np
 
 # Internal-ish Imports
-from LDTObserverTools.obstools import deveny_grangle
+from obstools import deveny_grangle
 
 
 def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
@@ -49,9 +49,9 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True,
     if copyfn is None:
         copyfn = flatfn
 
-    bias = CCDData.read(biasfn)
-    flat = flatfn if isinstance(flatfn, CCDData) else CCDData.read(flatfn)
-    copy = copyfn if isinstance(copyfn, CCDData) else CCDData.read(copyfn)
+    bias = astropy.nddata.CCDData.read(biasfn)
+    flat = flatfn if isinstance(flatfn, astropy.nddata.CCDData) else astropy.nddata.CCDData.read(flatfn)
+    copy = copyfn if isinstance(copyfn, astropy.nddata.CCDData) else astropy.nddata.CCDData.read(copyfn)
 
     if objname is None:
         objname = 'FlatFieldAsStar'
@@ -134,7 +134,7 @@ def load_pypeit_flat(filename, lcen=None, gpmm=None):
     `dict`
         Dictionary containing the various Flat products for ease of use
     """
-    with fits.open(filename) as hdul:
+    with astropy.io.fits.open(filename) as hdul:
 
         flat_dict = {}
         for hdu in hdul:
