@@ -17,7 +17,10 @@ import os
 import warnings
 
 # Local Imports
+from .astrometry import * # noqa
+from .reduction import *  # noqa
 from .version import version
+
 
 
 def short_warning(message, category, filename, lineno, file=None, line=None):

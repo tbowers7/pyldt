@@ -34,6 +34,9 @@ import requests.exceptions
 from pyldt import reduction
 
 
+# Define API
+__all__ = ['solve_field','validate_solution']
+
 def solve_field(img_fn, debug=False):
     """solve_field Get a plate solution from Astrometry.Net
 
