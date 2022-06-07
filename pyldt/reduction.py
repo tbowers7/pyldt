@@ -47,7 +47,7 @@ from tqdm import tqdm
 from pyldt import utils
 
 # Define API
-__all__ = ['LMI','DeVeny','imcombine','trim_oscan']
+__all__ = ["LMI", "DeVeny", "imcombine", "savetime", "trim_oscan", "wrap_trim_oscan"]
 
 
 # Global Variables
@@ -206,11 +206,11 @@ class _ImageDirectory:
         ):
 
             # Fit the overscan section, subtract it, then trim the image
-            ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
+            ccd = wrap_trim_oscan(ccd)
 
             # Update the header
             ccd.header["HISTORY"] = PKG_NAME
-            ccd.header["HISTORY"] = "Trimmed bias saved: " + _savetime()
+            ccd.header["HISTORY"] = "Trimmed bias saved: " + savetime()
             ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
             # Save the result (suffix = 't'); delete the input file
@@ -247,7 +247,7 @@ class _ImageDirectory:
             comb_bias.header.set(
                 "ncombine", len(t_bias_cl.files), "# of input images in combination"
             )
-            comb_bias.header["HISTORY"] = "Combined bias created: " + _savetime()
+            comb_bias.header["HISTORY"] = "Combined bias created: " + savetime()
             comb_bias.header["HISTORY"] = (
                 "Median combined " + f"{len(t_bias_cl.files)} files:"
             )
@@ -294,14 +294,14 @@ class _ImageDirectory:
         ):
 
             # Fit the overscan section, subtract it, then trim the image
-            ccd = _trim_oscan(ccd, self.biassec, self.trimsec)
+            ccd = wrap_trim_oscan(ccd)
 
             # Subtract master bias
             ccd = ccdproc.subtract_bias(ccd, combined_bias)
 
             # Update the header
             ccd.header["HISTORY"] = PKG_NAME
-            ccd.header["HISTORY"] = "Bias-subtracted image saved: " + _savetime()
+            ccd.header["HISTORY"] = "Bias-subtracted image saved: " + savetime()
             ccd.header["HISTORY"] = f"Subtracted bias: {self.zerofn}"
             ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
@@ -422,7 +422,7 @@ class LMI(_ImageDirectory):
             ccd = ccd.divide(np.mean(ccd), handle_meta="first_found")
 
             # Update the header
-            ccd.header["HISTORY"] = "Normalized flat saved: " + _savetime()
+            ccd.header["HISTORY"] = "Normalized flat saved: " + savetime()
             ccd.header["HISTORY"] = f"Previous filename: {flat_fn}"
 
             # Save the result (suffix = 'n'); delete the input file
@@ -466,7 +466,7 @@ class LMI(_ImageDirectory):
                     "ncombine", len(flats), "# of input images in combination"
                 )
                 cflat.header["HISTORY"] = PKG_NAME
-                cflat.header["HISTORY"] = "Combined flat created: " + _savetime()
+                cflat.header["HISTORY"] = "Combined flat created: " + savetime()
                 cflat.header["HISTORY"] = "Median combined " + f"{len(flats)} files:"
                 for fname in flats:
                     # Remove the path portion of the filename for the HISTORY
@@ -535,7 +535,7 @@ class LMI(_ImageDirectory):
                     # Update the header
                     ccd.header["flatcor"] = True
                     ccd.header["HISTORY"] = PKG_NAME
-                    ccd.header["HISTORY"] = "Flat-corrected image saved: " + _savetime()
+                    ccd.header["HISTORY"] = "Flat-corrected image saved: " + savetime()
                     ccd.header["HISTORY"] = f"Divided by flat: {mflat_fn}"
                     ccd.header["HISTORY"] = f"Previous filename: {sci_fn}"
 
@@ -726,7 +726,7 @@ class DeVeny(_ImageDirectory):
                             )
                             cflat.header["HISTORY"] = PKG_NAME
                             cflat.header["HISTORY"] = (
-                                "Combined flat " + "created: " + _savetime()
+                                "Combined flat " + "created: " + savetime()
                             )
                             cflat.header[
                                 "HISTORY"
@@ -856,7 +856,7 @@ def imcombine(
         "ncombine", len(file_cl.files), "# of input images in combination"
     )
     comb_img.header["HISTORY"] = PKG_NAME
-    comb_img.header["HISTORY"] = "Combined image created: " + _savetime()
+    comb_img.header["HISTORY"] = "Combined image created: " + savetime()
     comb_img.header["HISTORY"] = (
         f"{combine.title()} combined " + f"{len(file_cl.files)} files:"
     )
@@ -878,7 +878,7 @@ def imcombine(
     return None
 
 
-def _savetime(local=False):
+def savetime(local=False):
     """Shortcut to return the current UT timestamp in a useful form
     :return: `str`: UT timestamp in format %Y-%m-%d %H:%M:%S
     """
@@ -888,30 +888,6 @@ def _savetime(local=False):
 
 
 def trim_oscan(ccd, biassec, trimsec, model=None):
-    """trim_oscan Public function to call the private one
-
-    Seriously, why do I have this?
-
-    Parameters
-    ----------
-    ccd : [type]
-        [description]
-    biassec : [type]
-        [description]
-    trimsec : [type]
-        [description]
-    model : [type], optional
-        [description], by default None
-
-    Returns
-    -------
-    [type]
-        [description]
-    """
-    return _trim_oscan(ccd, biassec, trimsec, model=model)
-
-
-def _trim_oscan(ccd, biassec, trimsec, model=None):
     """Subtract the overscan region and trim image to desired size.
     The CCDPROC function subtract_overscan() expects the TRIMSEC of the image
     (the part you want to keep) to span the entirety of one dimension, with the
@@ -958,12 +934,47 @@ def _trim_oscan(ccd, biassec, trimsec, model=None):
     return ccdproc.trim_image(ccd[:, xt.start : xt.stop])
 
 
-# ===================================================================$
-def main():
-    """
-    This is the main body function.
-    """
+def wrap_trim_oscan(ccd):
+    """wrap_trim_oscan Wrap the trim_oscan() function to handle multiple amps
 
+    This function will perform the magic of stitching together multi-amplifier
+    reads.  There may be instrument-specific issues related to this, but it is
+    likely that only LMI will ever bet read out in multi-amplifier mode.
 
-if __name__ == "__main__":
-    main()
+    TODO: Whether here or somewhere else, should convert things to electrons
+          via the GAIN.  Might not be necessary within the context of Roz, but
+          will be necessary for science frame analysis with multiple amplifier
+          reads.
+
+    Parameters
+    ----------
+    ccd : `astropy.nddata.CCDData`
+        The CCDData object upon which to operate
+
+    Returns
+    -------
+    `astropy.nddata.CCDData`
+        The properly trimmed and overscan-subtracted CCDData object
+    """
+    # Shorthand
+    hdr = ccd.header
+
+    # The "usual" case, pass-through from `trim_oscan()`
+    if hdr["NUMAMP"] == 1:
+        return trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"])
+
+    # Use the individual amplifier BIAS and TRIM sections to process
+    amp_nums = [kwd[-2:] for kwd in hdr.keys() if "AMPID" in kwd]
+    for amp_num in amp_nums:
+        yrange, xrange = ccdproc.utils.slices.slice_from_string(
+            hdr[f"TRIM{amp_num}"], fits_convention=True
+        )
+        ccd.data[yrange.start : yrange.stop, xrange.start : xrange.stop] = trim_oscan(
+            ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"]
+        ).data
+
+    # Return the final trimmed image
+    ytrim, xtrim = ccdproc.utils.slices.slice_from_string(
+        hdr["TRIMSEC"], fits_convention=True
+    )
+    return ccdproc.trim_image(ccd[ytrim.start : ytrim.stop, xtrim.start : xtrim.stop])
