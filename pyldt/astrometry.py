@@ -58,6 +58,8 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     -------
     `astropy.wcs.WCS`
         The resultant WCS from the solving process
+    is_solved : `bool`
+        Whether the returned WCS is the Astrometry.Net solution or not
     """
     # Instantiate the Astrometry.Net communicator
     ast = astroquery.astrometry_net.AstrometryNet()
@@ -99,7 +101,7 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
 
     # Validate the solved WCS against the lois-written WCS
     #  If the solution is way off, just keep the lois WCS
-    use_wcs = validate_solution(solved_wcs, existing_wcs)
+    use_wcs, is_solved = validate_solution(solved_wcs, existing_wcs)
 
     if debug:
         # If desired, print a bunch of diagnostics
@@ -125,10 +127,12 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     # Write the CCDData object to disk with the updated WCS information
     ccd.write(img_fn, overwrite=True)
 
-    return use_wcs
+    print(f"This is the return value: {(use_wcs, is_solved)}")
+
+    return use_wcs, is_solved
 
 
-def validate_solution(solved, lois, rtol=1e-05, atol=3e-07):
+def validate_solution(solved, lois, rtol=1e-05, atol=3e-07, debug=False):
     """validate_solution Validate the Astrometry.Net plate solution
 
     If the Astrometry.Net solution is way off, keep the original WCS.
@@ -136,26 +140,32 @@ def validate_solution(solved, lois, rtol=1e-05, atol=3e-07):
 
     Parameters
     ----------
-    solved : `astropy.wcs.wcs.WCS`
+    solved : `astropy.wcs.WCS`
         The Astrometry.Net-solved WCS
-    lois : `astropy.wcs.wcs.WCS`
+    lois : `astropy.wcs.WCS`
         The original WCS from the image header
     rtol : `float`, optional
         Relative tolerance, passed to np.allclose()  [Default: 1e-05]
     atol : `float`, optional
         Absolute tolerance, passed to np.allclose()  [Default: 3e-07]
+    debug : `bool`, optional
+        Print debugging statements?  [Default: False]
 
     Returns
     -------
-    `astropy.wcs.wcs.WCS`
+    wcs : `astropy.wcs.WCS`
         The WCS to use with this frame
+    is_close : `bool`
+        Whether the solved WCS is close to the lois default
     """
+    # Ask numpy!
     is_close = np.allclose(
         solved.pixel_scale_matrix, lois.pixel_scale_matrix, rtol=rtol, atol=atol
     )
 
-    print(f"\n\nIn validate_solution(), numpy sez: {is_close}")
-    print(f"Solved:\n{solved.pixel_scale_matrix * 3600}")
-    print(f"Lois:\n{lois.pixel_scale_matrix * 3600}")
+    print(f"\n\nIs the solution close to the lois default: {is_close}")
+    if debug:
+        print(f"Solved:\n{solved.pixel_scale_matrix * 3600}")
+        print(f"Lois:\n{lois.pixel_scale_matrix * 3600}")
 
-    return solved if is_close else lois
+    return (solved, is_close) if is_close else (lois, is_close)
