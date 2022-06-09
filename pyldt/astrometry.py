@@ -38,7 +38,7 @@ from pyldt import reduction
 __all__ = ["solve_field", "validate_solution"]
 
 
-def solve_field(img_fn, debug=False):
+def solve_field(img_fn, detect_threshold=10, debug=False):
     """solve_field Get a plate solution from Astrometry.Net
 
     Plate solutions not only provide accurate astrometry of objects in an
@@ -47,8 +47,10 @@ def solve_field(img_fn, debug=False):
 
     Parameters
     ----------
-    img_fn : `str`
+    img_fn : `str` or `pathlib.Path`
         Filename of the image on which to do a plate solution
+    detect_threshold, `float`, optional
+        Detection limit, as # of sigma above background
     debug : `bool`, optional
         Print debugging statements? [Default: False]
 
@@ -69,7 +71,11 @@ def solve_field(img_fn, debug=False):
         try:
             if not submission_id:
                 # Find objects in the image and send the list to Astrometry.Net
-                wcs_header = ast.solve_from_image(img_fn, submission_id=submission_id)
+                wcs_header = ast.solve_from_image(
+                    img_fn,
+                    submission_id=submission_id,
+                    detect_threshold=detect_threshold,
+                )
             else:
                 # Subsequent times through the loop, check on the submission
                 wcs_header = ast.monitor_submission(submission_id, solve_timeout=120)
@@ -120,6 +126,7 @@ def solve_field(img_fn, debug=False):
     ccd.write(img_fn, overwrite=True)
 
     return use_wcs
+
 
 def validate_solution(solved, lois, rtol=1e-05, atol=3e-07):
     """validate_solution Validate the Astrometry.Net plate solution
