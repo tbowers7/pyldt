@@ -88,6 +88,7 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
         else:
             # Got a result: Terminate
             try_again = False
+    print("done.")
 
     # Instantiate a WCS object from the wcs header returned by Astronmetry.Net
     solved_wcs = astropy.wcs.WCS(wcs_header)
@@ -127,8 +128,6 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     # Write the CCDData object to disk with the updated WCS information
     ccd.write(img_fn, overwrite=True)
 
-    print(f"This is the return value: {(use_wcs, is_solved)}")
-
     return use_wcs, is_solved
 
 
@@ -163,7 +162,7 @@ def validate_solution(solved, lois, rtol=1e-05, atol=3e-07, debug=False):
         solved.pixel_scale_matrix, lois.pixel_scale_matrix, rtol=rtol, atol=atol
     )
 
-    print(f"\n\nIs the solution close to the lois default: {is_close}")
+    print(f"\nThe Astrometry.Net solution ≈ the lois default:   {is_close}")
     if debug:
         print(f"Solved:\n{solved.pixel_scale_matrix * 3600}")
         print(f"Lois:\n{lois.pixel_scale_matrix * 3600}")

@@ -58,18 +58,20 @@ class _ImageDirectory:
     """Internal class, parent of LMI & DeVeny.
     Contains collective metadata for a single night's data images.  This
     parent class is modified for specific differences between LMI and DeVeny.
+
+    Args:
+        path (:TYPE:`str`)
+            Path to the directory containing the images to be reduced.
+        mem_limit (:TYPE:`float`), optional
+            Memory limit for the image combination routine
+            (Default: 8.192e9 bytes)
+        debug (:TYPE:`bool`)
+            Description.
+        show_warnings (:TYPE:`bool`)
+            Description.
     """
 
-    def __init__(self, path, debug=True, show_warnings=False):
-        """__init__: Initialize the internal _ImageDirectory class.
-        Args:
-            path (:TYPE:`str`)
-                Path to the directory containing the images to be reduced.
-            debug (:TYPE:`bool`)
-                Description.
-            show_warnings (:TYPE:`bool`)
-                Description.
-        """
+    def __init__(self, path, mem_limit=8.192e9, debug=True, show_warnings=False):
         # Settings that determine how the class functions
         self.debug = debug
         # Unless specified, suppress AstroPy warnings
@@ -81,6 +83,7 @@ class _ImageDirectory:
         self.path = path
         if self.debug:
             print(f"Processing images in {self.path}")
+        self.mem_limit = mem_limit
         # Attributes that need to be specified for the instrument
         self.biassec = None
         self.trimsec = None
@@ -240,7 +243,7 @@ class _ImageDirectory:
                 sigma_clip_high_thresh=5,
                 sigma_clip_func=np.ma.median,
                 sigma_clip_dev_func=astropy.stats.mad_std,
-                mem_limit=4e9,
+                mem_limit=self.mem_limit,
             )
 
             # Add FITS keyword NCOMBINE and HISTORY
@@ -316,32 +319,34 @@ class _ImageDirectory:
 
 
 class LMI(_ImageDirectory):
-    """Class call for a folder of LMI data to be calibrated."""
+    """Class call for a folder of LMI data to be calibrated.
 
-    def __init__(self, path, biassec=None, trimsec=None, bin_factor=2):
-        """__init__: Initialize LMI class.
-        Args:
-            path (:TYPE:`str`)
-                Path to the directory containing the images to be reduced.
-            biassec (:TYPE:`str`)
-                The IRAF-style overscan region to be subtracted from each frame.
-                If unspecified, use the values suggested in the LMI User Manual.
-            trimsec (:TYPE:`str`)
-                The IRAF-style image region to be retained in each frame.
-                If unspecified, use the values suggested in the LMI User Manual.
-            bin_factor (:TYPE:`int`)
-                The binning factor used to create the image(s) to be processed.
-                [Default: 2]
-        """
-        super().__init__(path)
+    Args:
+        path (:TYPE:`str`)
+            Path to the directory containing the images to be reduced.
+        biassec (:TYPE:`str`)
+            The IRAF-style overscan region to be subtracted from each frame.
+            If unspecified, use the values suggested in the LMI User Manual.
+        trimsec (:TYPE:`str`)
+            The IRAF-style image region to be retained in each frame.
+            If unspecified, use the values suggested in the LMI User Manual.
+        bin_factor (:TYPE:`int`)
+            The binning factor used to create the image(s) to be processed.
+            [Default: 2]
+        mem_limit (:TYPE:`float`), optional
+            Memory limit for the image combination routine
+            (Default: 8.192e9 bytes)
+    """
+
+    def __init__(
+        self, path, biassec=None, trimsec=None, bin_factor=2, mem_limit=8.192e9
+    ):
+        # SUPER-INIT!!!
+        super().__init__(path, mem_limit=mem_limit)
+
+        # Load up the instance attributes
         self.bin_factor = int(bin_factor)
         self.binning = f"{self.bin_factor} {self.bin_factor}"
-
-        # # Set the BIASSEC and TRIMSEC appropriately FOR 2x2 BINNING
-        # if self.bin_factor == 2:
-        #     self.biassec = '[3100:3124, 3:3079]' if biassec is None else biassec
-        #     self.trimsec = '[30:3094,   3:3079]' if trimsec is None else trimsec
-        # else:
         self.biassec = biassec
         self.trimsec = trimsec
 
