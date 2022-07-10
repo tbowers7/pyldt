@@ -35,9 +35,11 @@ import shutil
 import warnings
 
 # 3rd Party Libraries
+import astropy.convolution
 import astropy.modeling
 import astropy.nddata
 import astropy.stats
+import astropy.units as u
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc
 import numpy as np
@@ -136,10 +138,13 @@ class _ImageDirectory:
         # Loop through files,
         for ccd, fname in self.icl.ccds(ccdsum=binning, return_fname=True):
             # Check for empty trimsec/biassec attributes, pull from header
-            if self.biassec is None:
-                self.biassec = ccd.header["biassec"]
-            if self.trimsec is None:
-                self.trimsec = ccd.header["trimsec"]
+            try:
+                if self.biassec is None:
+                    self.biassec = ccd.header["biassec"]
+                if self.trimsec is None:
+                    self.trimsec = ccd.header["trimsec"]
+            except KeyError as err:
+                warnings.warn(err)
 
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
@@ -172,14 +177,12 @@ class _ImageDirectory:
             new_raw = False
         # Copy files to raw_data
         if new_raw or overwrite:
-            pattern = self.path + "/" + self.prefix + ".*.fits"
-            if self.debug:
-                print(pattern)
-            for img in glob.iglob(pattern):
+            pattern = self.path.joinpath(f"{self.prefix}.*.fits")
+            for img in self.path.glob(f"{self.prefix}.*.fits"):
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
-    def _biascombine(self, binning=None, output="bias.fits"):
+    def _biascombine(self, binning=None, output="bias.fits", keep_trimmed=False):
         """Finds and combines bias frames with the indicated binning
 
         :param binning:
@@ -234,17 +237,20 @@ class _ImageDirectory:
         if t_bias_cl.files:
 
             if self.debug:
-                print("Doing median combine now...")
+                print("Doing average combine now...")
             comb_bias = ccdproc.combine(
                 [f"{self.path}/{fn}" for fn in t_bias_cl.files],
-                method="median",
+                method="average",
                 sigma_clip=True,
-                sigma_clip_low_thresh=5,
-                sigma_clip_high_thresh=5,
-                sigma_clip_func=np.ma.median,
                 sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=self.mem_limit,
             )
+            print(f"Number of initial NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}")
+            # Clean up the combined image by interpolating over NaN's:
+            comb_bias.data = astropy.convolution.interpolate_replace_nans(
+                comb_bias.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
+            )
+            print(f"Number of final NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}")
 
             # Add FITS keyword NCOMBINE and HISTORY
             comb_bias.header.set(
@@ -252,7 +258,7 @@ class _ImageDirectory:
             )
             comb_bias.header["HISTORY"] = "Combined bias created: " + savetime()
             comb_bias.header["HISTORY"] = (
-                "Median combined " + f"{len(t_bias_cl.files)} files:"
+                "Average combined " + f"{len(t_bias_cl.files)} files:"
             )
 
             for fname in t_bias_cl.files:
@@ -260,8 +266,9 @@ class _ImageDirectory:
 
             # Save the result; delete the input files
             comb_bias.write(f"{self.path}/{output}", overwrite=True)
-            for fname in t_bias_cl.files:
-                os.remove(f"{self.path}/{fname}")
+            if not keep_trimmed:
+                for fname in t_bias_cl.files:
+                    os.remove(f"{self.path}/{fname}")
 
     def bias_subtract(self):
         """
@@ -339,10 +346,10 @@ class LMI(_ImageDirectory):
     """
 
     def __init__(
-        self, path, biassec=None, trimsec=None, bin_factor=2, mem_limit=8.192e9
+        self, path, biassec=None, trimsec=None, bin_factor=2, mem_limit=8.192e9, **kwargs
     ):
         # SUPER-INIT!!!
-        super().__init__(path, mem_limit=mem_limit)
+        super().__init__(path, mem_limit=mem_limit, **kwargs)
 
         # Load up the instance attributes
         self.bin_factor = int(bin_factor)
@@ -386,15 +393,15 @@ class LMI(_ImageDirectory):
         """
         self._inspectimages(self.binning)
 
-    def bias_combine(self):
+    def bias_combine(self, keep_trimmed=False):
         """Combine the bias frames in the directory with a given binning
         Basic emulation of IRAF's zerocombine.  Produces a combined bias image
         saved with the appropriate filename.
         :return: None
         """
-        self._biascombine(self.binning, output=self.zerofn)
+        self._biascombine(self.binning, output=self.zerofn, keep_trimmed=keep_trimmed)
 
-    def flat_combine(self):
+    def flat_combine(self, keep_subtracted=False, keep_normalized=False):
         """Finds and combines flat frames with the indicated binning
 
         :return: None
@@ -423,8 +430,8 @@ class LMI(_ImageDirectory):
 
         # Normalize flat field images by the mean value
         for ccd, flat_fn in flat_cl.ccds(return_fname=True):
-            # Perform the division
-            ccd = ccd.divide(np.mean(ccd), handle_meta="first_found")
+            # Perform the division (in a NaN-safe manner)
+            ccd = ccd.divide(np.nanmean(ccd), handle_meta="first_found")
 
             # Update the header
             ccd.header["HISTORY"] = "Normalized flat saved: " + savetime()
@@ -432,7 +439,8 @@ class LMI(_ImageDirectory):
 
             # Save the result (suffix = 'n'); delete the input file
             ccd.write(f"{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}", overwrite=True)
-            os.remove(f"{self.path}/{flat_fn}")
+            if not keep_subtracted:
+                os.remove(f"{self.path}/{flat_fn}")
 
             # Update the progress bar
             prog_bar.update(1)
@@ -457,14 +465,17 @@ class LMI(_ImageDirectory):
                 print(f"Combining flats for filter {filt}...")
                 cflat = ccdproc.combine(
                     flats,
-                    method="median",
+                    method="average",
                     sigma_clip=True,
-                    sigma_clip_low_thresh=5,
-                    sigma_clip_high_thresh=5,
-                    sigma_clip_func=np.ma.median,
                     sigma_clip_dev_func=astropy.stats.mad_std,
-                    mem_limit=4e9,
+                    mem_limit=self.mem_limit,
                 )
+                print(f"Number of initial NaN pixels: {(~np.isfinite(cflat.data)).sum()}")
+                # Clean up the combined image by interpolating over NaN's:
+                cflat.data = astropy.convolution.interpolate_replace_nans(
+                    cflat.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
+                )
+                print(f"Number of final NaN pixels: {(~np.isfinite(cflat.data)).sum()}")
 
                 # Add FITS keyword NCOMBINE and HISTORY
                 cflat.header.set(
@@ -484,7 +495,8 @@ class LMI(_ImageDirectory):
                 cflat.write(f"{self.path}/{flat_fn}", overwrite=True)
                 for fname in flats:
                     # Path name is already included
-                    os.remove(f"{fname}")
+                    if not keep_normalized:
+                        os.remove(f"{fname}")
 
         else:
             print("No flats to be combined.")
@@ -714,13 +726,14 @@ class DeVeny(_ImageDirectory):
                             # Actually do the flat combining
                             cflat = ccdproc.combine(
                                 lamp_cl.files,
-                                method="median",
+                                method="average",
                                 sigma_clip=True,
-                                sigma_clip_low_thresh=5,
-                                sigma_clip_high_thresh=5,
-                                sigma_clip_func=np.ma.median,
                                 sigma_clip_dev_func=astropy.stats.mad_std,
-                                mem_limit=4e9,
+                                mem_limit=self.mem_limit,
+                            )
+                            # Clean up the combined image by interpolating over NaN's:
+                            cflat.data = astropy.convolution.interpolate_replace_nans(
+                                cflat, astropy.convolution.Gaussian2DKernel(x_stddev=1)
                             )
 
                             # Add FITS keyword NCOMBINE and HISTORY
@@ -783,6 +796,7 @@ def imcombine(
     printstat=True,
     overwrite=True,
     returnccd=False,
+    mem_limit=8.192e9,
 ):
     """Combine a collection of images
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
@@ -849,11 +863,12 @@ def imcombine(
         file_cl.files,
         method=combine,
         sigma_clip=True,
-        sigma_clip_low_thresh=5,
-        sigma_clip_high_thresh=5,
-        sigma_clip_func=np.ma.median,
         sigma_clip_dev_func=astropy.stats.mad_std,
-        mem_limit=4e9,
+        mem_limit=mem_limit,
+    )
+    # Clean up the combined image by interpolating over NaN's:
+    comb_img.data = astropy.convolution.interpolate_replace_nans(
+        comb_img, astropy.convolution.Gaussian2DKernel(x_stddev=1)
     )
 
     # Add FITS keyword NCOMBINE and add HISTORY
@@ -881,6 +896,33 @@ def imcombine(
         for fname in files:
             os.remove(f"{fname}")
     return None
+
+
+def parse_lois_ampids(hdr):
+    """parse_lois_ampids Parse the LOIS amplifier IDs
+
+    LOIS is particular about how it records which amplifiers are used to read
+    out the CCD.  Most of the time, users will use a single amplifier, whose ID
+    is recorded in the 'AMPID' FITS keyword.  If, however, more than one
+    amplifier is used, 'AMPID' is not present, and the amplifier combination
+    must be reconstructed from the present 'AMPIDnn' keywords.
+
+    Parameters
+    ----------
+    hdr : `astropy.io.fits.Header`
+        The FITS header for which the amplifier IDs are to be parsed
+
+    Returns
+    -------
+    `str`
+        The amplifier designation(s) used
+    """
+    # Basic 1-amplifier case:
+    if int(hdr["NUMAMP"]) == 1:
+        return f"{hdr['AMPID'].strip()}"
+
+    # Else, parse out all of the "AMPIDnn" keywords, join and return
+    return "".join([val.strip() for kwd, val in hdr.items() if "AMPID" in kwd])
 
 
 def savetime(local=False):
@@ -966,20 +1008,45 @@ def wrap_trim_oscan(ccd):
 
     # The "usual" case, pass-through from `trim_oscan()`
     if hdr["NUMAMP"] == 1:
-        return trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"])
+        return trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"]).multiply(
+            hdr["GAIN"] * u.electron / u.adu
+        )
+
+    # The multi-amplifier case is a little more involved.
+    # First, make an empty FLOAT array for the trim output
+    float_array = np.zeros_like(ccd.data, dtype=float)
 
     # Use the individual amplifier BIAS and TRIM sections to process
     amp_nums = [kwd[-2:] for kwd in hdr.keys() if "AMPID" in kwd]
     for amp_num in amp_nums:
+
+        # Totally hacking tweak of the situation for 2x2 binning:
+        if "51:1585" in hdr[f"TRIM{amp_num}"]:
+            hdr[f"TRIM{amp_num}"] = hdr[f"TRIM{amp_num}"].replace("51:1585", "51:1584")
+            xstart = xstop = 1
+            hdr["TRIMSEC"] = hdr["TRIMSEC"].replace("51:3121", "52:3120")
+        elif "1586:3121" in hdr[f"TRIM{amp_num}"]:
+            hdr[f"TRIM{amp_num}"] = hdr[f"TRIM{amp_num}"].replace(
+                "1586:3121", "1587:3121"
+            )
+            xstart = xstop = -1
+            hdr["TRIMSEC"] = hdr["TRIMSEC"].replace("51:3121", "52:3120")
+        else:
+            xstart = xstop = 0
         yrange, xrange = ccdproc.utils.slices.slice_from_string(
             hdr[f"TRIM{amp_num}"], fits_convention=True
         )
-        ccd.data[yrange.start : yrange.stop, xrange.start : xrange.stop] = trim_oscan(
-            ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"]
-        ).data
+        chunk = trim_oscan(ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"]).multiply(
+            hdr[f"GAIN_{amp_num}"] * u.electron / u.adu
+        )
+        float_array[
+            yrange.start : yrange.stop, xrange.start + xstart : xrange.stop + xstop
+        ] = chunk.data
 
+    ccd.data = float_array
     # Return the final trimmed image
     ytrim, xtrim = ccdproc.utils.slices.slice_from_string(
         hdr["TRIMSEC"], fits_convention=True
     )
+    ccd.header["BUNIT"] = "electron"
     return ccdproc.trim_image(ccd[ytrim.start : ytrim.stop, xtrim.start : xtrim.stop])
