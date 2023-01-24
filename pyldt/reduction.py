@@ -28,10 +28,9 @@ software of your choosing.
 
 # Built-In Libraries
 import datetime
-import glob
-import os
 import pathlib
 import shutil
+import sys
 import warnings
 
 # 3rd Party Libraries
@@ -56,7 +55,7 @@ __all__ = ["LMI", "DeVeny", "imcombine", "savetime", "trim_oscan", "wrap_trim_os
 PKG_NAME = f"PyLDT {'='*55}"  # For header metadata printing
 
 
-class _ImageDirectory:
+class ImageDirectory:
     """Internal class, parent of LMI & DeVeny.
     Contains collective metadata for a single night's data images.  This
     parent class is modified for specific differences between LMI and DeVeny.
@@ -82,7 +81,7 @@ class _ImageDirectory:
             warnings.simplefilter("ignore", UserWarning)
 
         # Metadata related to all files in this directory
-        self.path = path
+        self.path = pathlib.Path(path)
         if self.debug:
             print(f"Processing images in {self.path}")
         self.mem_limit = mem_limit
@@ -155,7 +154,7 @@ class _ImageDirectory:
             # Fix depricated FITS keyword
             if "RADECSYS" in ccd.header:
                 ccd.header.rename_keyword("RADECSYS", "RADESYSa")
-            ccd.write(f"{self.path}/{fname}", overwrite=True)
+            ccd.write(self.path.joinpath(fname), overwrite=True)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -177,16 +176,18 @@ class _ImageDirectory:
             new_raw = False
         # Copy files to raw_data
         if new_raw or overwrite:
-            pattern = self.path.joinpath(f"{self.prefix}.*.fits")
-            for img in self.path.glob(f"{self.prefix}.*.fits"):
+            for img in sorted(self.path.glob(f"{self.prefix}.*.fits")):
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
-    def _biascombine(self, binning=None, output="bias.fits", keep_trimmed=False):
+    def _biascombine(
+        self, binning=None, output="bias.fits", keep_trimmed=False, gain_correct=True
+    ):
         """Finds and combines bias frames with the indicated binning
 
         :param binning:
         :param output:
+        :param gain_correct:
         :return:
         """
         if binning is None:
@@ -212,7 +213,7 @@ class _ImageDirectory:
         ):
 
             # Fit the overscan section, subtract it, then trim the image
-            ccd = wrap_trim_oscan(ccd)
+            ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
             # Update the header
             ccd.header["HISTORY"] = PKG_NAME
@@ -220,8 +221,11 @@ class _ImageDirectory:
             ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
             # Save the result (suffix = 't'); delete the input file
-            ccd.write(f"{self.path}/{file_name[:-5]}t{file_name[-5:]}", overwrite=True)
-            os.remove(f"{self.path}/{file_name}")
+            ccd.header = self.add_package_versions(ccd.header)
+            ccd.write(
+                self.path.joinpath(f"{file_name[:-5]}t{file_name[-5:]}"), overwrite=True
+            )
+            self.path.joinpath(file_name).unlink()
 
             # Update the progress bar
             prog_bar.update(1)
@@ -239,13 +243,15 @@ class _ImageDirectory:
             if self.debug:
                 print("Doing average combine now...")
             comb_bias = ccdproc.combine(
-                [f"{self.path}/{fn}" for fn in t_bias_cl.files],
+                [self.path.joinpath(fn) for fn in t_bias_cl.files],
                 method="average",
                 sigma_clip=True,
                 sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=self.mem_limit,
             )
-            print(f"Number of initial NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}")
+            print(
+                f"Number of initial NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}"
+            )
             # Clean up the combined image by interpolating over NaN's:
             comb_bias.data = astropy.convolution.interpolate_replace_nans(
                 comb_bias.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
@@ -265,13 +271,18 @@ class _ImageDirectory:
                 comb_bias.header["HISTORY"] = fname
 
             # Save the result; delete the input files
-            comb_bias.write(f"{self.path}/{output}", overwrite=True)
+            comb_bias.header = self.add_package_versions(comb_bias.header)
+            comb_bias.write(self.path.joinpath(output), overwrite=True)
             if not keep_trimmed:
                 for fname in t_bias_cl.files:
-                    os.remove(f"{self.path}/{fname}")
+                    self.path.joinpath(fname).unlink()
 
-    def bias_subtract(self):
+    def bias_subtract(self, gain_correct=True):
         """
+
+        gain_correct : `bool`
+            Multiply by the CCD gain before returning?  [Default: True]
+
 
         :return:
         """
@@ -284,10 +295,10 @@ class _ImageDirectory:
         self.icl.refresh()
 
         # Load the appropriate bias frame to subtract
-        if not os.path.isfile(f"{self.path}/{self.zerofn}"):
+        if not self.path.joinpath(self.zerofn).is_file():
             self._biascombine(binning=self.binning)
         try:
-            combined_bias = astropy.nddata.CCDData.read(f"{self.path}/{self.zerofn}")
+            combined_bias = astropy.nddata.CCDData.read(self.path.joinpath(self.zerofn))
         except FileNotFoundError:
             # Just skip the bias subtraction
             print(f"Skipping bias subtraction for lack of {self.zerofn}")
@@ -304,7 +315,7 @@ class _ImageDirectory:
         ):
 
             # Fit the overscan section, subtract it, then trim the image
-            ccd = wrap_trim_oscan(ccd)
+            ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
             # Subtract master bias
             ccd = ccdproc.subtract_bias(ccd, combined_bias)
@@ -316,16 +327,50 @@ class _ImageDirectory:
             ccd.header["HISTORY"] = f"Original filename: {file_name}"
 
             # Save the result (suffix = 'b'); delete input file
-            ccd.write(f"{self.path}/{file_name[:-5]}b{file_name[-5:]}", overwrite=True)
-            os.remove(f"{self.path}/{file_name}")
+            ccd.header = self.add_package_versions(ccd.header)
+            ccd.write(
+                self.path.joinpath(f"{file_name[:-5]}b{file_name[-5:]}"), overwrite=True
+            )
+            self.path.joinpath(file_name).unlink()
 
             # Update the progress bar
             prog_bar.update(1)
         # Close the progress bar, end of loop
         prog_bar.close()
 
+    @staticmethod
+    def add_package_versions(hdr):
+        """Add or update the depedendent package versions
 
-class LMI(_ImageDirectory):
+        Include the version information for dependent packages in the FITS
+        headers for the purposes for debugging if something changes in the
+        underlying infrastructure.  By comparing package version numbers,
+        it may be possible to pinpoint when a change in a dependancy causes
+        problems in this package's output.
+
+        Parameters
+        ----------
+        hdr : :obj:`astropy.io.fits.Header`
+            The FITS header to which to add/update package version info
+
+        Returns
+        -------
+        :obj:`astropy.io.fits.Header`
+            The updated FITS header
+        """
+        # Add Python, Astropy, CCDPROC, and Numpy version numbers
+        hdr["VERSPYT"] = (
+            ".".join([str(v) for v in sys.version_info[:3]]),
+            "Python version",
+        )
+        hdr["VERSAST"] = (astropy.__version__, "Astropy version")
+        hdr["VERSCCD"] = (ccdproc.__version__, "CCDPROC version")
+        hdr["VERSNPY"] = (np.__version__, "Numpy version")
+
+        return hdr
+
+
+class LMI(ImageDirectory):
     """Class call for a folder of LMI data to be calibrated.
 
     Args:
@@ -346,7 +391,13 @@ class LMI(_ImageDirectory):
     """
 
     def __init__(
-        self, path, biassec=None, trimsec=None, bin_factor=2, mem_limit=8.192e9, **kwargs
+        self,
+        path,
+        biassec=None,
+        trimsec=None,
+        bin_factor=2,
+        mem_limit=8.192e9,
+        **kwargs,
     ):
         # SUPER-INIT!!!
         super().__init__(path, mem_limit=mem_limit, **kwargs)
@@ -393,13 +444,18 @@ class LMI(_ImageDirectory):
         """
         self._inspectimages(self.binning)
 
-    def bias_combine(self, keep_trimmed=False):
+    def bias_combine(self, keep_trimmed=False, gain_correct=True):
         """Combine the bias frames in the directory with a given binning
         Basic emulation of IRAF's zerocombine.  Produces a combined bias image
         saved with the appropriate filename.
         :return: None
         """
-        self._biascombine(self.binning, output=self.zerofn, keep_trimmed=keep_trimmed)
+        self._biascombine(
+            self.binning,
+            output=self.zerofn,
+            keep_trimmed=keep_trimmed,
+            gain_correct=gain_correct,
+        )
 
     def flat_combine(self, keep_subtracted=False, keep_normalized=False):
         """Finds and combines flat frames with the indicated binning
@@ -438,9 +494,12 @@ class LMI(_ImageDirectory):
             ccd.header["HISTORY"] = f"Previous filename: {flat_fn}"
 
             # Save the result (suffix = 'n'); delete the input file
-            ccd.write(f"{self.path}/{flat_fn[:-6]}n{flat_fn[-5:]}", overwrite=True)
+            ccd.header = self.add_package_versions(ccd.header)
+            ccd.write(
+                self.path.joinpath(f"{flat_fn[:-6]}n{flat_fn[-5:]}"), overwrite=True
+            )
             if not keep_subtracted:
-                os.remove(f"{self.path}/{flat_fn}")
+                self.path.joinpath(flat_fn).unlink()
 
             # Update the progress bar
             prog_bar.update(1)
@@ -470,7 +529,9 @@ class LMI(_ImageDirectory):
                     sigma_clip_dev_func=astropy.stats.mad_std,
                     mem_limit=self.mem_limit,
                 )
-                print(f"Number of initial NaN pixels: {(~np.isfinite(cflat.data)).sum()}")
+                print(
+                    f"Number of initial NaN pixels: {(~np.isfinite(cflat.data)).sum()}"
+                )
                 # Clean up the combined image by interpolating over NaN's:
                 cflat.data = astropy.convolution.interpolate_replace_nans(
                     cflat.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
@@ -492,11 +553,12 @@ class LMI(_ImageDirectory):
                 flat_fn = f"flat_bin{self.bin_factor}_{filt}.fits"
                 if self.debug:
                     print(f"Saving combined flat as {flat_fn}")
-                cflat.write(f"{self.path}/{flat_fn}", overwrite=True)
+                cflat.header = self.add_package_versions(cflat.header)
+                cflat.write(self.path.joinpath(flat_fn), overwrite=True)
                 for fname in flats:
                     # Path name is already included
                     if not keep_normalized:
-                        os.remove(f"{fname}")
+                        pathlib.Path(fname).unlink()
 
         else:
             print("No flats to be combined.")
@@ -557,10 +619,12 @@ class LMI(_ImageDirectory):
                     ccd.header["HISTORY"] = f"Previous filename: {sci_fn}"
 
                     # Save the result (suffix = 'f'); delete the input file
+                    ccd.header = self.add_package_versions(ccd.header)
                     ccd.write(
-                        f"{self.path}/{sci_fn[:-6]}f{sci_fn[-5:]}", overwrite=True
+                        self.path.joinpath(f"{sci_fn[:-6]}f{sci_fn[-5:]}"),
+                        overwrite=True,
                     )
-                    os.remove(f"{self.path}/{sci_fn}")
+                    self.path.joinpath(sci_fn).unlink()
 
                     # Update the progress bar
                     prog_bar.update(1)
@@ -568,7 +632,7 @@ class LMI(_ImageDirectory):
                 prog_bar.close()
 
 
-class DeVeny(_ImageDirectory):
+class DeVeny(ImageDirectory):
     """Class call for a folder of DeVeny data to be calibrated."""
 
     def __init__(self, path, biassec=None, trimsec=None, prefix=None, multilamp=False):
@@ -597,7 +661,7 @@ class DeVeny(_ImageDirectory):
         if prefix is None:
             # Look at all the 20*.fits files in this directory, and choose
             # Note: This will need to be updated for the year 2100
-            fitsfiles = glob.glob(self.path + "/" + "20*.????.fits")
+            fitsfiles = self.path.glob("20*.????.fits")
             if fitsfiles:
                 slashind = fitsfiles[0].rfind("/")
                 self.prefix = fitsfiles[0][slashind + 1 : slashind + 9]
@@ -759,12 +823,13 @@ class DeVeny(_ImageDirectory):
                             flat_fn = f"flat_{grname}_{gra}_{filt}{lname}.fits"
                             if self.debug:
                                 print(f"Saving combined flat as {flat_fn}")
-                            cflat.write(f"{self.path}/{flat_fn}", overwrite=True)
+                            cflat.header = self.add_package_versions(cflat.header)
+                            cflat.write(self.path.joinpath(flat_fn), overwrite=True)
                             for fname in lamp_cl.files:
                                 # Note: These filenames have the path already
                                 #       attached, via the .filter() method of
                                 #       ImgFileCol.
-                                os.remove(f"{fname}")
+                                pathlib.Path(fname).unlink()
         else:
             print("No flats to be combined.")
 
@@ -830,7 +895,7 @@ def imcombine(
         with open(inlist, "r", encoding="utf-8") as f_obj:
             files = []
             for line in f_obj:
-                files.append(line.rstrip())
+                files.append(pathlib.Path(line.rstrip()))
 
     # Check for proper file list
     if len(files) < 3:
@@ -839,7 +904,7 @@ def imcombine(
 
     # Check that specified input files exist
     for fname in files:
-        if not os.path.isfile(fname):
+        if not fname.is_file():
             print(f"File {fname} does not exist.")
             raise Exception()
 
@@ -891,10 +956,11 @@ def imcombine(
     if outfn is None:
         outfn = f"{files[0][:-5]}_comb{files[0][-5:]}"
     print(f"Saving combined image as {outfn}")
+    comb_img.header = ImageDirectory.add_package_versions(comb_img.header)
     comb_img.write(f"{outfn}", overwrite=overwrite)
     if del_input:
         for fname in files:
-            os.remove(f"{fname}")
+            fname.unlink()
     return None
 
 
@@ -968,11 +1034,11 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
 
     # Model & Subtract the overscan
     if model is None:
-        model = astropy.modeling.models.Chebyshev1D(1)  # Chebyshev 1st order function
+        # Chebyshev 1st order function
+        model = astropy.modeling.models.Chebyshev1D(1)
     else:
-        model = astropy.modeling.models.Chebyshev1D(
-            1
-        )  # Figure out how to incorporate others
+        # Really nothing different here... figure out how to incorporate others
+        model = astropy.modeling.models.Chebyshev1D(1)
     ccd = ccdproc.subtract_overscan(
         ccd, overscan=ccd[:, xb.start : xb.stop], median=True, model=model
     )
@@ -981,7 +1047,7 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
     return ccdproc.trim_image(ccd[:, xt.start : xt.stop])
 
 
-def wrap_trim_oscan(ccd):
+def wrap_trim_oscan(ccd, gain_correct=True):
     """wrap_trim_oscan Wrap the trim_oscan() function to handle multiple amps
 
     This function will perform the magic of stitching together multi-amplifier
@@ -997,20 +1063,27 @@ def wrap_trim_oscan(ccd):
     ----------
     ccd : `astropy.nddata.CCDData`
         The CCDData object upon which to operate
+    gain_correct : `bool`
+        Multiply by the CCD gain before returning?  [Default: True]
 
     Returns
     -------
-    `astropy.nddata.CCDData`
-        The properly trimmed and overscan-subtracted CCDData object
+    trimmed : `astropy.nddata.CCDData`
+        The properly trimmed and overscan-subtracted CCDData object,
+        optionally gain corrected
     """
     # Shorthand
     hdr = ccd.header
 
-    # The "usual" case, pass-through from `trim_oscan()`
+    # The "usual" case, pass-through from `trim_oscan()`, with optional
+    #   gain correction
     if hdr["NUMAMP"] == 1:
-        return trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"]).multiply(
-            hdr["GAIN"] * u.electron / u.adu
-        )
+        trimmed = trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"])
+        if gain_correct and trimmed.unit == u.adu:
+            trimmed = ccdproc.gain_correct(
+                trimmed, hdr["GAIN"], gain_unit=u.electron / u.adu
+            )
+        return trimmed
 
     # The multi-amplifier case is a little more involved.
     # First, make an empty FLOAT array for the trim output
@@ -1036,17 +1109,22 @@ def wrap_trim_oscan(ccd):
         yrange, xrange = ccdproc.utils.slices.slice_from_string(
             hdr[f"TRIM{amp_num}"], fits_convention=True
         )
-        chunk = trim_oscan(ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"]).multiply(
-            hdr[f"GAIN_{amp_num}"] * u.electron / u.adu
-        )
+        chunk = trim_oscan(ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"])
+        if gain_correct and ccd.unit == u.adu:
+            chunk = ccdproc.gain_correct(
+                chunk, hdr[f"GAIN_{amp_num}"], gain_unit=u.electron / u.adu
+            )
+
         float_array[
             yrange.start : yrange.stop, xrange.start + xstart : xrange.stop + xstop
         ] = chunk.data
 
     ccd.data = float_array
+    if gain_correct and ccd.unit == u.adu:
+        ccd.unit = u.electron
+
     # Return the final trimmed image
     ytrim, xtrim = ccdproc.utils.slices.slice_from_string(
         hdr["TRIMSEC"], fits_convention=True
     )
-    ccd.header["BUNIT"] = "electron"
     return ccdproc.trim_image(ccd[ytrim.start : ytrim.stop, xtrim.start : xtrim.stop])

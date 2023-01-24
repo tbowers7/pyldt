@@ -28,6 +28,10 @@ import numpy as np
 # Internal Imports
 
 
+# Define API
+__all__ = ["mmms", "set_std_tickparams"]
+
+
 def mmms(image):
     """mmms performs basic statistics on an image (min, max, mean, stddev)
 
@@ -35,3 +39,23 @@ def mmms(image):
     :return:
     """
     return np.min(image), np.max(image), np.mean(image), np.std(image)
+
+
+def set_std_tickparams(axis, tsz):
+    """set_std_tickparams _summary_
+    _extended_summary_
+    Parameters
+    ----------
+    axis : `matplotlib.pyplot.axis`
+        PyPlot axis who whom the tick parameters must be set
+    tsz : `int` or `float`
+        TypeSiZe
+    """
+    axis.tick_params(
+        axis="both",
+        which="both",
+        direction="in",
+        top=True,
+        right=True,
+        labelsize=tsz,
+    )
