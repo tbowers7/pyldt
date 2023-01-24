@@ -97,7 +97,7 @@ class ImageDirectory:
         # Create Placeholder for initial ImageFileCollection for the directory
         self.icl = None
 
-    def _inspectimages(self, binning=None, deveny=False):
+    def inspectimages(self, binning=None, deveny=False):
         """Inspect the images in the specified directory
 
         Inspects the images in the specified directory, and loads in the
@@ -169,18 +169,15 @@ class ImageDirectory:
         """
 
         raw_data = pathlib.Path(self.path, "raw")
-        if not raw_data.exists():
-            raw_data.mkdir(exist_ok=True)
-            new_raw = True
-        else:
-            new_raw = False
-        # Copy files to raw_data
-        if new_raw or overwrite:
-            for img in sorted(self.path.glob(f"{self.prefix}.*.fits")):
+        raw_data.mkdir(exist_ok=True)
+
+        # Copy files to raw_data, overwrite if requested
+        for img in sorted(self.path.glob(f"{self.prefix}.*.fits")):
+            if (not raw_data.joinpath(img.name).exists()) or overwrite:
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
-    def _biascombine(
+    def biascombine(
         self, binning=None, output="bias.fits", keep_trimmed=False, gain_correct=True
     ):
         """Finds and combines bias frames with the indicated binning
@@ -296,7 +293,7 @@ class ImageDirectory:
 
         # Load the appropriate bias frame to subtract
         if not self.path.joinpath(self.zerofn).is_file():
-            self._biascombine(binning=self.binning)
+            self.biascombine(binning=self.binning)
         try:
             combined_bias = astropy.nddata.CCDData.read(self.path.joinpath(self.zerofn))
         except FileNotFoundError:
@@ -442,7 +439,7 @@ class LMI(ImageDirectory):
         Looks to ensure BIASSEC and TRIMSEC values are properly set
         :return: None
         """
-        self._inspectimages(self.binning)
+        self.inspectimages(self.binning)
 
     def bias_combine(self, keep_trimmed=False, gain_correct=True):
         """Combine the bias frames in the directory with a given binning
@@ -450,7 +447,7 @@ class LMI(ImageDirectory):
         saved with the appropriate filename.
         :return: None
         """
-        self._biascombine(
+        self.biascombine(
             self.binning,
             output=self.zerofn,
             keep_trimmed=keep_trimmed,
@@ -718,7 +715,7 @@ class DeVeny(ImageDirectory):
         Also cleans up the FILTREAR FITS keyword (removes parenthetical value)
         :return: None
         """
-        self._inspectimages(self.binning, deveny=True)
+        self.inspectimages(self.binning, deveny=True)
 
     def bias_combine(self):
         """Combine the bias frames in the directory with a given binning
@@ -726,7 +723,7 @@ class DeVeny(ImageDirectory):
         saved with the appropriate filename.
         :return: None
         """
-        self._biascombine(self.binning, output=self.zerofn)
+        self.biascombine(self.binning, output=self.zerofn)
 
     def flat_combine(self):
         """
