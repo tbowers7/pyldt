@@ -143,7 +143,7 @@ class ImageDirectory:
                 if self.trimsec is None:
                     self.trimsec = ccd.header["trimsec"]
             except KeyError as err:
-                warnings.warn(err)
+                warnings.warn(err, RuntimeWarning)
 
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
@@ -246,14 +246,15 @@ class ImageDirectory:
                 sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=self.mem_limit,
             )
-            print(
-                f"Number of initial NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}"
-            )
+            before_nan = (~np.isfinite(comb_bias.data)).sum()
             # Clean up the combined image by interpolating over NaN's:
             comb_bias.data = astropy.convolution.interpolate_replace_nans(
                 comb_bias.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
             )
-            print(f"Number of final NaN pixels: {(~np.isfinite(comb_bias.data)).sum()}")
+            print(
+                "   Number of initial / final NaN pixels:   "
+                f"{before_nan} / {(~np.isfinite(comb_bias.data)).sum()}"
+            )
 
             # Add FITS keyword NCOMBINE and HISTORY
             comb_bias.header.set(
@@ -526,14 +527,15 @@ class LMI(ImageDirectory):
                     sigma_clip_dev_func=astropy.stats.mad_std,
                     mem_limit=self.mem_limit,
                 )
-                print(
-                    f"Number of initial NaN pixels: {(~np.isfinite(cflat.data)).sum()}"
-                )
+                before_nan = (~np.isfinite(cflat.data)).sum()
                 # Clean up the combined image by interpolating over NaN's:
                 cflat.data = astropy.convolution.interpolate_replace_nans(
                     cflat.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
                 )
-                print(f"Number of final NaN pixels: {(~np.isfinite(cflat.data)).sum()}")
+                print(
+                    "   Number of initial / final NaN pixels:   "
+                    f"{before_nan} / {(~np.isfinite(cflat.data)).sum()}"
+                )
 
                 # Add FITS keyword NCOMBINE and HISTORY
                 cflat.header.set(
@@ -884,8 +886,10 @@ def imcombine(
 
     # Check for inputs
     if len(files) > 0 and inlist is not None:
-        print("Only one of files or inlist may be specified, not both.")
-        raise Exception()
+        warnings.warn(
+            "Only one of files or inlist may be specified, not both.", RuntimeWarning
+        )
+        print("Using the `inlist` for file combination.")
 
     # Read in the text list inlist, if specified
     if inlist is not None:
@@ -893,17 +897,14 @@ def imcombine(
             files = []
             for line in f_obj:
                 files.append(pathlib.Path(line.rstrip()))
-
-    # Check for proper file list
-    if len(files) < 3:
-        print("Combination requires at least three input images.")
-        raise Exception()
+    # Ensure the files are pathlib.Path objects
+    else:
+        files = [pathlib.Path(fn) for fn in files]
 
     # Check that specified input files exist
     for fname in files:
         if not fname.is_file():
-            print(f"File {fname} does not exist.")
-            raise Exception()
+            raise FileNotFoundError(f"File {fname} does not exist.")
 
     # Determine combine method (default = 'median')
     if combine != "median" or combine != "mean":
@@ -921,6 +922,15 @@ def imcombine(
                 + f"Mean: {mean:.2f} Stddev: {stdv:.2f}"
             )
 
+    # Check for proper file list
+    if len(files) < 3:
+        warnings.warn(
+            "Proper combination requires at least three input images.  "
+            "Proceeding regardless...",
+            RuntimeWarning,
+        )
+
+    # Run the combination
     comb_img = ccdproc.combine(
         file_cl.files,
         method=combine,
@@ -928,12 +938,20 @@ def imcombine(
         sigma_clip_dev_func=astropy.stats.mad_std,
         mem_limit=mem_limit,
     )
+
     # Clean up the combined image by interpolating over NaN's:
-    print(f"Number of initial NaN pixels: {(~np.isfinite(comb_img.data)).sum()}")
+    before_nan = (~np.isfinite(comb_img.data)).sum()
     comb_img.data = astropy.convolution.interpolate_replace_nans(
         comb_img, astropy.convolution.Gaussian2DKernel(x_stddev=1)
     )
-    print(f"Number of final NaN pixels: {(~np.isfinite(comb_img.data)).sum()}")
+    print(
+        "   Number of initial / final NaN pixels:   "
+        f"{before_nan} / {(~np.isfinite(comb_img.data)).sum()}"
+    )
+    # Update the image mask
+    print(type(comb_img.mask), type(comb_img.mask[0]))
+    comb_img.mask = np.isfinite(comb_img.data)
+
 
     # Add FITS keyword NCOMBINE and add HISTORY
     comb_img.header.set(
@@ -945,7 +963,9 @@ def imcombine(
         f"{combine.title()} combined " + f"{len(file_cl.files)} files:"
     )
     for fname in file_cl.files:
-        comb_img.header["HISTORY"] = fname
+        comb_img.header["HISTORY"] = (
+            fname.name if isinstance(fname, pathlib.Path) else fname
+        )
 
     # If returnccd is True, return now before thinking about saving.
     if returnccd:
@@ -956,7 +976,7 @@ def imcombine(
         outfn = f"{files[0][:-5]}_comb{files[0][-5:]}"
     print(f"Saving combined image as {outfn}")
     comb_img.header = ImageDirectory.add_package_versions(comb_img.header)
-    comb_img.write(f"{outfn}", overwrite=overwrite)
+    comb_img.write(outfn, overwrite=overwrite)
     if del_input:
         for fname in files:
             fname.unlink()
@@ -1025,11 +1045,11 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
     """
 
     # Convert the FITS bias & trim sections into slice classes for use
-    _, xb = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
-    yt, xt = ccdproc.utils.slices.slice_from_string(trimsec, fits_convention=True)
+    _, x_b = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
+    y_t, x_t = ccdproc.utils.slices.slice_from_string(trimsec, fits_convention=True)
 
     # First trim off the top & bottom rows
-    ccd = ccdproc.trim_image(ccd[yt.start : yt.stop, :])
+    ccd = ccdproc.trim_image(ccd[y_t.start : y_t.stop, :])
 
     # Model & Subtract the overscan
     if model is None:
@@ -1039,11 +1059,11 @@ def trim_oscan(ccd, biassec, trimsec, model=None):
         # Really nothing different here... figure out how to incorporate others
         model = astropy.modeling.models.Chebyshev1D(1)
     ccd = ccdproc.subtract_overscan(
-        ccd, overscan=ccd[:, xb.start : xb.stop], median=True, model=model
+        ccd, overscan=ccd[:, x_b.start : x_b.stop], median=True, model=model
     )
 
     # Trim the overscan & return
-    return ccdproc.trim_image(ccd[:, xt.start : xt.stop])
+    return ccdproc.trim_image(ccd[:, x_t.start : x_t.stop])
 
 
 def wrap_trim_oscan(ccd, gain_correct=True):
