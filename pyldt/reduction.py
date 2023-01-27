@@ -929,9 +929,11 @@ def imcombine(
         mem_limit=mem_limit,
     )
     # Clean up the combined image by interpolating over NaN's:
+    print(f"Number of initial NaN pixels: {(~np.isfinite(comb_img.data)).sum()}")
     comb_img.data = astropy.convolution.interpolate_replace_nans(
         comb_img, astropy.convolution.Gaussian2DKernel(x_stddev=1)
     )
+    print(f"Number of final NaN pixels: {(~np.isfinite(comb_img.data)).sum()}")
 
     # Add FITS keyword NCOMBINE and add HISTORY
     comb_img.header.set(
