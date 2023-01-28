@@ -1,3 +1,9 @@
+# Compiled python modules.
+*.pyc
+
+# Python egg metadata, regenerated from source files by setuptools.
+/*.egg-info
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -8,6 +14,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+env/
 build/
 develop-eggs/
 dist/
@@ -19,13 +26,11 @@ lib64/
 parts/
 sdist/
 var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
+*.swp
+version.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -40,16 +45,12 @@ pip-delete-this-directory.txt
 # Unit test / coverage reports
 htmlcov/
 .tox/
-.nox/
 .coverage
 .coverage.*
 .cache
 nosetests.xml
 coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
+*,cover
 
 # Translations
 *.mo
@@ -57,43 +58,23 @@ coverage.xml
 
 # Django stuff:
 *.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
 
 # Sphinx documentation
 doc/_build/
 doc/build/
-doc/_static
+#doc/_static
 doc/_templates
 
 # PyBuilder
 target/
 
 # Don't track the actual, real stuff like passwords and hostnames
-config/*.conf
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+*.conf
 
 # Ignore rando code dirs
 .vscode
-.code-workspace
+*.code-workspace
 .VSCodeCounter
-.idea
 
 # Stupid OS X stuff
 *.DS_Store
@@ -101,13 +82,6 @@ venv.bak/
 # New File Template
 newPythonFileTemplate.py
 
-# And HTML and FITS files created as part of the running
-*.html
-*.fits
-
-# SOFIA
-SOFIACruiseTools/
-
-# Plot output
-.eps
-.png
+# Output plot files
+*.eps
+*.png

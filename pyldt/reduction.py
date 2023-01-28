@@ -143,7 +143,7 @@ class ImageDirectory:
                 if self.trimsec is None:
                     self.trimsec = ccd.header["trimsec"]
             except KeyError as err:
-                warnings.warn(err, RuntimeWarning)
+                warnings.warn(str(err), RuntimeWarning)
 
             # If DeVeny, adjust the FILTREAR FITS keyword to make it play nice
             #   Also, create GRAT_ID keyword containing DVx grating ID
@@ -246,15 +246,9 @@ class ImageDirectory:
                 sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=self.mem_limit,
             )
-            before_nan = (~np.isfinite(comb_bias.data)).sum()
-            # Clean up the combined image by interpolating over NaN's:
-            comb_bias.data = astropy.convolution.interpolate_replace_nans(
-                comb_bias.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
-            )
-            print(
-                "   Number of initial / final NaN pixels:   "
-                f"{before_nan} / {(~np.isfinite(comb_bias.data)).sum()}"
-            )
+
+            # Clean the NaN's
+            comb_bias = self.clean_nans(comb_bias)
 
             # Add FITS keyword NCOMBINE and HISTORY
             comb_bias.header.set(
@@ -366,6 +360,52 @@ class ImageDirectory:
         hdr["VERSNPY"] = (np.__version__, "Numpy version")
 
         return hdr
+
+    @staticmethod
+    def clean_nans(ccd: astropy.nddata.CCDData) -> astropy.nddata.CCDData:
+        """Clean the NaN's from a CCDData object by interpolation
+
+        This method performs a cleaning of NaN values in a ``CCDData`` object.
+        The issue is not simply removing NaN's in the data attribute, but also
+        adjusting the mask and uncertainty attributes to align with the
+        cleaned data.
+
+        The replacement algorithm is provided by
+        :func:`astropy.convolution.interpolate_replace_nans`, used alongside
+        a 2D Gaussian kernel with sigma = 1 pixel.  This effectively replaces
+        NaN values with a smoothed average of the surrounding pixels.
+
+        Parameters
+        ----------
+        ccd : :obj:`astropy.nddata.CCDData`
+            The input ``CCDData`` object to be cleaned.
+
+        Returns
+        -------
+        :obj:`astropy.nddata.CCDData`
+            The resulting cleaned ``CCDData`` object.  The cleaning is done
+            in place.
+        """
+        # Clean up the image by interpolating over NaN's:
+        before_nan = (~np.isfinite(ccd.data)).sum()
+        ccd.data = astropy.convolution.interpolate_replace_nans(
+            ccd.data, kernel := astropy.convolution.Gaussian2DKernel(x_stddev=1)
+        )
+
+        # Update the image mask
+        ccd.mask = ~np.isfinite(ccd.data)
+        print(
+            "   Number of initial / final NaN pixels:   "
+            f"{before_nan} / {ccd.mask.sum()}"
+        )
+
+        # Update the image uncertainty by smoothing, too
+        ccd.uncertainty.array = astropy.convolution.interpolate_replace_nans(
+            ccd.uncertainty.array, kernel
+        )
+
+        # Return the updated CCDData object
+        return ccd
 
 
 class LMI(ImageDirectory):
@@ -527,15 +567,9 @@ class LMI(ImageDirectory):
                     sigma_clip_dev_func=astropy.stats.mad_std,
                     mem_limit=self.mem_limit,
                 )
-                before_nan = (~np.isfinite(cflat.data)).sum()
-                # Clean up the combined image by interpolating over NaN's:
-                cflat.data = astropy.convolution.interpolate_replace_nans(
-                    cflat.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
-                )
-                print(
-                    "   Number of initial / final NaN pixels:   "
-                    f"{before_nan} / {(~np.isfinite(cflat.data)).sum()}"
-                )
+
+                # Clean the NaN's
+                cflat = self.clean_nans(cflat)
 
                 # Add FITS keyword NCOMBINE and HISTORY
                 cflat.header.set(
@@ -794,11 +828,9 @@ class DeVeny(ImageDirectory):
                                 sigma_clip_dev_func=astropy.stats.mad_std,
                                 mem_limit=self.mem_limit,
                             )
-                            # Clean up the combined image by interpolating over NaN's:
-                            cflat.data = astropy.convolution.interpolate_replace_nans(
-                                cflat.data,
-                                astropy.convolution.Gaussian2DKernel(x_stddev=1),
-                            )
+
+                            # Clean the NaN's
+                            cflat = self.clean_nans(cflat)
 
                             # Add FITS keyword NCOMBINE and HISTORY
                             cflat.header.set(
@@ -940,22 +972,7 @@ def imcombine(
         mem_limit=mem_limit,
     )
 
-    # Clean up the combined image by interpolating over NaN's:
-    before_nan = (~np.isfinite(comb_ccd.data)).sum()
-    comb_ccd.data = astropy.convolution.interpolate_replace_nans(
-        comb_ccd.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
-    )
-    # Update the image mask
-    print("   ** Mask information:")
-    print(comb_ccd.mask.shape, comb_ccd.mask.dtype)
-    comb_ccd.mask = ~np.isfinite(comb_ccd.data)
-    print(comb_ccd.mask.shape, comb_ccd.mask.dtype)
-    print(
-        "   Number of initial / final NaN pixels:   "
-        f"{before_nan} / {comb_ccd.mask.sum()}"
-    )
-    # Update the image uncertainty
-    comb_ccd.uncertainty = astropy.nddata.StdDevUncertainty(comb_ccd.data)
+    comb_ccd = ImageDirectory.clean_nans(comb_ccd)
 
     # Add FITS keyword NCOMBINE and add HISTORY
     comb_ccd.header.set(
