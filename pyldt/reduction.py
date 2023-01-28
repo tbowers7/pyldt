@@ -796,7 +796,8 @@ class DeVeny(ImageDirectory):
                             )
                             # Clean up the combined image by interpolating over NaN's:
                             cflat.data = astropy.convolution.interpolate_replace_nans(
-                                cflat, astropy.convolution.Gaussian2DKernel(x_stddev=1)
+                                cflat.data,
+                                astropy.convolution.Gaussian2DKernel(x_stddev=1),
                             )
 
                             # Add FITS keyword NCOMBINE and HISTORY
@@ -931,7 +932,7 @@ def imcombine(
         )
 
     # Run the combination
-    comb_img = ccdproc.combine(
+    comb_ccd = ccdproc.combine(
         file_cl.files,
         method=combine,
         sigma_clip=True,
@@ -940,43 +941,46 @@ def imcombine(
     )
 
     # Clean up the combined image by interpolating over NaN's:
-    before_nan = (~np.isfinite(comb_img.data)).sum()
-    comb_img.data = astropy.convolution.interpolate_replace_nans(
-        comb_img, astropy.convolution.Gaussian2DKernel(x_stddev=1)
-    )
-    print(
-        "   Number of initial / final NaN pixels:   "
-        f"{before_nan} / {(~np.isfinite(comb_img.data)).sum()}"
+    before_nan = (~np.isfinite(comb_ccd.data)).sum()
+    comb_ccd.data = astropy.convolution.interpolate_replace_nans(
+        comb_ccd.data, astropy.convolution.Gaussian2DKernel(x_stddev=1)
     )
     # Update the image mask
-    print(type(comb_img.mask), type(comb_img.mask[0]))
-    comb_img.mask = np.isfinite(comb_img.data)
-
+    print("   ** Mask information:")
+    print(comb_ccd.mask.shape, comb_ccd.mask.dtype)
+    comb_ccd.mask = ~np.isfinite(comb_ccd.data)
+    print(comb_ccd.mask.shape, comb_ccd.mask.dtype)
+    print(
+        "   Number of initial / final NaN pixels:   "
+        f"{before_nan} / {comb_ccd.mask.sum()}"
+    )
+    # Update the image uncertainty
+    comb_ccd.uncertainty = astropy.nddata.StdDevUncertainty(comb_ccd.data)
 
     # Add FITS keyword NCOMBINE and add HISTORY
-    comb_img.header.set(
+    comb_ccd.header.set(
         "ncombine", len(file_cl.files), "# of input images in combination"
     )
-    comb_img.header["HISTORY"] = PKG_NAME
-    comb_img.header["HISTORY"] = "Combined image created: " + savetime()
-    comb_img.header["HISTORY"] = (
+    comb_ccd.header["HISTORY"] = PKG_NAME
+    comb_ccd.header["HISTORY"] = "Combined image created: " + savetime()
+    comb_ccd.header["HISTORY"] = (
         f"{combine.title()} combined " + f"{len(file_cl.files)} files:"
     )
     for fname in file_cl.files:
-        comb_img.header["HISTORY"] = (
+        comb_ccd.header["HISTORY"] = (
             fname.name if isinstance(fname, pathlib.Path) else fname
         )
 
     # If returnccd is True, return now before thinking about saving.
     if returnccd:
-        return comb_img
+        return comb_ccd
 
     # Build filename (if not specified in call), save, remove input files
     if outfn is None:
         outfn = f"{files[0][:-5]}_comb{files[0][-5:]}"
     print(f"Saving combined image as {outfn}")
-    comb_img.header = ImageDirectory.add_package_versions(comb_img.header)
-    comb_img.write(outfn, overwrite=overwrite)
+    comb_ccd.header = ImageDirectory.add_package_versions(comb_ccd.header)
+    comb_ccd.write(outfn, overwrite=overwrite)
     if del_input:
         for fname in files:
             fname.unlink()

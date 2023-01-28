@@ -20,6 +20,7 @@ Astrometry.Net
 """
 
 # Built-In Libraries
+import time
 
 # 3rd Party Libraries
 import astropy.io.fits
@@ -85,6 +86,9 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
             submission_id = error.args[1]
         except (ConnectionError, requests.exceptions.JSONDecodeError):
             pass
+        except requests.exceptions.ReadTimeout:
+            # Wait 30 seconds and try again
+            time.sleep(30)
         else:
             # Got a result: Terminate
             try_again = False
