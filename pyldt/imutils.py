@@ -143,7 +143,6 @@ def load_pypeit_flat(filename, lcen=None, gpmm=None):
         Dictionary containing the various Flat products for ease of use
     """
     with astropy.io.fits.open(filename) as hdul:
-
         flat_dict = {}
         for hdu in hdul:
             if "EXTNAME" in hdu.header:

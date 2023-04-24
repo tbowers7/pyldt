@@ -208,7 +208,6 @@ class ImageDirectory:
         for ccd, file_name in self.icl.ccds(
             ccdsum=binning, imagetyp="bias", bitpix=16, return_fname=True
         ):
-
             # Fit the overscan section, subtract it, then trim the image
             ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
@@ -236,7 +235,6 @@ class ImageDirectory:
 
         # If we have a fresh list of trimmed biases to work with...
         if t_bias_cl.files:
-
             if self.debug:
                 print("Doing average combine now...")
             comb_bias = ccdproc.combine(
@@ -305,7 +303,6 @@ class ImageDirectory:
         for ccd, file_name in self.icl.ccds(
             ccdsum=self.binning, bitpix=16, return_fname=True
         ):
-
             # Fit the overscan section, subtract it, then trim the image
             ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
@@ -549,14 +546,12 @@ class LMI(ImageDirectory):
             self.path, glob_include=f"{self.prefix}.*n.fits"
         )
         if norm_cl.files:
-
             # Create a unique list of the filter collection found in this set
             filters = list(norm_cl.summary["filters"])
             unique_filters = sorted(list(set(filters)))
 
             # Combine flat field frames for each filt in unique_filters
             for filt in unique_filters:
-
                 flats = norm_cl.files_filtered(filters=filt, include_path=True)
 
                 print(f"Combining flats for filter {filt}...")
@@ -619,7 +614,6 @@ class LMI(ImageDirectory):
         if flat_cl.files:
             # Loop through the filters present
             for filt in sorted(list(flat_cl.summary["filters"])):
-
                 # Load in the master flat for this filter
                 if self.debug:
                     print(f"Dividing by master flat for filter: {filt}")
@@ -640,7 +634,6 @@ class LMI(ImageDirectory):
                 for ccd, sci_fn in sci_cl.ccds(
                     ccdsum=self.binning, filters=filt, return_fname=True
                 ):
-
                     # Divide by master flat
                     ccdproc.flat_correct(ccd, master_flat)
 
@@ -782,22 +775,18 @@ class DeVeny(ImageDirectory):
 
         # Check that we have any
         if flats_cl.files:
-
             # In case more than one grating was used (unlikely except eng)
             for grname in list(set(list(flats_cl.summary["grat_id"]))):
-
                 # Filter the ImgFileColl to include only this grating
                 gr_cl = flats_cl.filter(grat_id=grname)
 
                 # In case more than one grating tilt angle was used (possible)
                 for gra in list(set(list(gr_cl.summary["grangle"]))):
-
                     # Filter the ImgFileColl to include only this tilt
                     gra_cl = gr_cl.filter(grangle=gra)
 
                     # In case more than one order-blocking filter was used (???)
                     for filt in list(set(list(gra_cl.summary["filtrear"]))):
-
                         # Filter the ImgFileColl to include only this filter
                         filt_cl = gra_cl.filter(filtrear=filt)
 
@@ -810,7 +799,6 @@ class DeVeny(ImageDirectory):
                             print(f"Flat lamps used: {lamps}")
 
                         for this_lamp in lamps:
-
                             if self.multilamp:
                                 lamp_cl = filt_cl.filter(comment=this_lamp)
                                 lname = (
@@ -1132,7 +1120,6 @@ def wrap_trim_oscan(ccd, gain_correct=True):
     # Use the individual amplifier BIAS and TRIM sections to process
     amp_nums = [kwd[-2:] for kwd in hdr.keys() if "AMPID" in kwd]
     for amp_num in amp_nums:
-
         # Totally hacking tweak of the situation for 2x2 binning:
         if "51:1585" in hdr[f"TRIM{amp_num}"]:
             hdr[f"TRIM{amp_num}"] = hdr[f"TRIM{amp_num}"].replace("51:1585", "51:1584")

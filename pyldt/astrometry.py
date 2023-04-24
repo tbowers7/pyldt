@@ -23,8 +23,10 @@ Astrometry.Net
 import time
 
 # 3rd Party Libraries
+import astropy.coordinates
 import astropy.io.fits
 import astropy.nddata
+import astropy.units as u
 import astropy.wcs
 import astroquery.astrometry_net
 import astroquery.exceptions
@@ -39,31 +41,92 @@ from pyldt import reduction
 __all__ = ["solve_field", "validate_solution"]
 
 
-def solve_field(img_fn, detect_threshold=10, debug=False):
+def solve_field(
+    img_fn,
+    *,
+    detect_threshold=10,
+    fwhm=3,
+    plate_scale=None,
+    plate_error=10,
+    force_image_upload=False,
+    validate=True,
+    add_scale=False,
+    add_center_coords=False,
+    debug=False,
+):
     """solve_field Get a plate solution from Astrometry.Net
 
     Plate solutions not only provide accurate astrometry of objects in an
     image, they can also help to identify distortions or rotations in the
     image not already described in the FITS header.
 
+    If an estimated plate scale is given, that is passed to Astrometry.Net
+    with ±``plate_error``% bounds to speed up the solution.
+
     Parameters
     ----------
-    img_fn : `str` or `pathlib.Path`
+    img_fn : :obj:`str` or :obj:`pathlib.Path`
         Filename of the image on which to do a plate solution
-    detect_threshold, `float`, optional
+    detect_threshold: float, optional
         Detection limit, as # of sigma above background
-    debug : `bool`, optional
-        Print debugging statements? [Default: False]
+    fwhm : float, optional
+        FWHM of detected objects, in pixels
+    plate_scale : :obj:`astropy.units.Quantity` or :obj:`float`, optional
+        The estimated plate scale of the image, to be passed to Astrometry.Net
+        for more quickly narrowing the solution parameters.  If ``plate_scale``
+        is a :obj:`astropy.units.Quantity`, awesome.  If not, then the value
+        will be assumed to be in arcsec/pix.  (Default: None)
+    plate_error : float, optional
+        Percentage error allowed on the plate scale for solution (Default: 10%)
+    force_image_upload : bool, optional
+        Pass-through option to ``astroquery`` on whether or not to force an
+        image upload rather than find sources locally.  (Default: False)
+    validate : bool, optional
+        Validate the solved WCS against the included WCS (likely from lois)?
+        (Default: True)
+    add_scale : bool, optional
+        Add the SCALE keyword to the FITS header from the Astrometry.Net
+        solution?  (Default: False)
+    add_center_coords : bool, optional
+        Add RA/DEC keywords to the FITS header corresponding to the center of
+        the image using the solution from the Astrometry.Net?  (Default: False)
+    debug : bool, optional
+        Print debugging statements? (Default: False)
 
     Returns
     -------
-    `astropy.wcs.WCS`
+    :obj:`astropy.wcs.WCS`
         The resultant WCS from the solving process
-    is_solved : `bool`
+    is_solved : bool
         Whether the returned WCS is the Astrometry.Net solution or not
     """
     # Instantiate the Astrometry.Net communicator
     ast = astroquery.astrometry_net.AstrometryNet()
+
+    scale_lower = None
+    scale_upper = None
+    scale_units = None
+
+    # If estimated plate scale is passed, generate submission bounds
+    if plate_scale:
+        # Check if `plate_scale` is a Quantity:
+        if isinstance(plate_scale, u.Quantity):
+            try:
+                plate_scale <<= u.arcsec / u.pix
+                scale_lower = plate_scale * (1 - plate_error / 100)
+                scale_upper = plate_scale * (1 + plate_error / 100)
+                scale_units = "arcsecperpix"
+            except u.core.UnitConversionError:
+                # If the input cannot be converted to "/pix, set to None
+                plate_scale = None
+        elif isinstance(plate_scale, (float, int)):
+            # If it's a float, assume arcsec/pix
+            plate_scale = u.Quantity(plate_scale, u.arcsec / u.pix)
+            scale_lower = plate_scale * (1 - plate_error / 100)
+            scale_upper = plate_scale * (1 + plate_error / 100)
+            scale_units = "arcsecperpix"
+        else:
+            plate_scale = None
 
     # Loop variables
     try_again = True
@@ -78,6 +141,14 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
                     img_fn,
                     submission_id=submission_id,
                     detect_threshold=detect_threshold,
+                    scale_units=scale_units,
+                    scale_est=plate_scale.value,
+                    scale_lower=scale_lower.value,
+                    scale_upper=scale_upper.value,
+                    publicly_visible="n",
+                    allow_commercial_use="n",
+                    fwhm=fwhm,
+                    force_image_upload=force_image_upload,
                 )
             else:
                 # Subsequent times through the loop, check on the submission
@@ -101,12 +172,16 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     with astropy.io.fits.open(img_fn) as hdulist:
         existing_wcs = astropy.wcs.WCS(hdulist[0].header)
 
-    # Read in the FITS file to a CCDData object
-    ccd = astropy.nddata.CCDData.read(img_fn)
+    # Read in the FITS file to a CCDData object, applying BUNIT as necessary
+    bunit = hdulist[0].header.get("bunit", None)
+    ccd = astropy.nddata.CCDData.read(img_fn, unit="adu" if bunit is None else None)
 
     # Validate the solved WCS against the lois-written WCS
     #  If the solution is way off, just keep the lois WCS
-    use_wcs, is_solved = validate_solution(solved_wcs, existing_wcs)
+    if validate and ccd.wcs is not None:
+        use_wcs, is_solved = validate_solution(solved_wcs, existing_wcs, debug=debug)
+    else:
+        use_wcs, is_solved = solved_wcs, True
 
     if debug:
         # If desired, print a bunch of diagnostics
@@ -118,7 +193,30 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     ccd.wcs = use_wcs
 
     # For good measure, also attempt to update the header with the WCS object
-    ccd.header.update(use_wcs.to_header())
+    ccd.header.update(use_wcs.to_header(relax=True))
+
+    # If `add_scale`, add it:
+    if add_scale:
+        try:
+            scale_str = next(
+                (x for x in wcs_header["COMMENT"] if x.startswith("scale:")), None
+            )
+            try:
+                solved_scale = float(scale_str.split()[1])
+            except TypeError:
+                solved_scale = -1.0
+            ccd.header["SCALE"] = np.round(solved_scale, 3)
+        except KeyError:
+            # Bad solution, "COMMENT"s not included in returned header
+            pass
+
+    # If `add_center_coords`, add them:
+    if add_center_coords:
+        center = use_wcs.pixel_to_world(ccd.header['NAXIS1']//2, ccd.header['NAXIS2']//2)
+        if isinstance(center, astropy.coordinates.SkyCoord):
+            ra, dec = center.to_string(style='hmsdms', precision=1).split()
+            ccd.header['RA'] = ra.replace('h',':').replace('m',":").replace('s','')
+            ccd.header['DEC'] = dec.replace('d',':').replace('m',":").replace('s','')
 
     # Add some history information
     ccd.header["HISTORY"] = reduction.PKG_NAME
@@ -135,7 +233,9 @@ def solve_field(img_fn, detect_threshold=10, debug=False):
     return use_wcs, is_solved
 
 
-def validate_solution(solved, lois, rtol=1e-05, atol=3e-07, debug=False):
+def validate_solution(
+    solved, lois, rtol=1e-05, atol=3e-07, debug=False
+) -> tuple[astropy.wcs.WCS, bool]:
     """validate_solution Validate the Astrometry.Net plate solution
 
     If the Astrometry.Net solution is way off, keep the original WCS.

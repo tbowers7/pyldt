@@ -403,14 +403,12 @@ def find_lines(image, thresh=20.0, findmax=50, minsep=11, fit_window=15, verbose
 
     # Step through the cut and identify peaks:
     for j in range(nx):
-
         # If we get too close to the end, skip
         if j > (nx - minsep):
             continue
 
         # If the spectrum at this pixel is above the THRESH...
         if spec[j] > (bkgd + thresh):
-
             # Mark this pixel as j1
             j1 = j
 
