@@ -108,7 +108,7 @@ def solve_field(
     scale_units = None
 
     # If estimated plate scale is passed, generate submission bounds
-    if plate_scale:
+    if plate_scale is not None:
         # Check if `plate_scale` is a Quantity:
         if isinstance(plate_scale, u.Quantity):
             try:
