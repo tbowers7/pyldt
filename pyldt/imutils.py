@@ -124,14 +124,14 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True, objname
 
 
 def load_pypeit_flat(filename, lcen=None, gpmm=None):
-    """load_pypeit_flat Load a PypeIt Master Flat into CCDData objects
+    """load_pypeit_flat Load a PypeIt Flat Calibration into CCDData objects
 
     Data analysis / debugging function
 
     Parameters
     ----------
     filename : `str`
-        Filename of the MasterFlat file to read in
+        Filename of the Flat file to read in
     lcen : `float`, optional
         Centeral wavelength of the grating setup [Default: None]
     gpmm : `float` or `int`, optional

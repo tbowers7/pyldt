@@ -306,7 +306,7 @@ class ImageDirectory:
             # Fit the overscan section, subtract it, then trim the image
             ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
-            # Subtract master bias
+            # Subtract combined bias
             ccd = ccdproc.subtract_bias(ccd, combined_bias)
 
             # Update the header
@@ -459,7 +459,7 @@ class LMI(ImageDirectory):
         calibration steps.  The procedure is:
             * copy_raw() -- Make a copy of the raw data in a safe place
             * insepct_images() -- Make sure the relevant metadata is set
-            * bias_combine() -- Combine the bias frames into a master bias
+            * bias_combine() -- Combine the bias frames into a Calibration bias
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
             * divide_flat() -- Divide all science frames by the appropriate flat
@@ -597,7 +597,7 @@ class LMI(ImageDirectory):
         general function.  Basic emulation of IRAF's ccdproc/flatcor function.
         :return: None
         """
-        # Load the list of master flats and bias-subtracted data frames
+        # Load the list of combined flats and bias-subtracted data frames
         flat_cl = ccdproc.ImageFileCollection(
             self.path, glob_include=f"flat_bin{self.bin_factor}_*.fits"
         )
@@ -614,10 +614,10 @@ class LMI(ImageDirectory):
         if flat_cl.files:
             # Loop through the filters present
             for filt in sorted(list(flat_cl.summary["filters"])):
-                # Load in the master flat for this filter
+                # Load in the combined flat for this filter
                 if self.debug:
-                    print(f"Dividing by master flat for filter: {filt}")
-                master_flat, mflat_fn = next(
+                    print(f"Dividing by combined flat for filter: {filt}")
+                combined_flat, mflat_fn = next(
                     flat_cl.ccds(ccdsum=self.binning, filters=filt, return_fname=True)
                 )
 
@@ -634,8 +634,8 @@ class LMI(ImageDirectory):
                 for ccd, sci_fn in sci_cl.ccds(
                     ccdsum=self.binning, filters=filt, return_fname=True
                 ):
-                    # Divide by master flat
-                    ccdproc.flat_correct(ccd, master_flat)
+                    # Divide by combined flat
+                    ccdproc.flat_correct(ccd, combined_flat)
 
                     # Update the header
                     ccd.header["flatcor"] = True
@@ -725,7 +725,7 @@ class DeVeny(ImageDirectory):
         calibration steps.  The procedure is:
             * copy_raw() -- Make a copy of the raw data in a safe place
             * insepct_images() -- Make sure the relevant metadata is set
-            * bias_combine() -- Combine the bias frames into a master bias
+            * bias_combine() -- Combine the bias frames into a Calibration bias
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
             * divide_flat() -- Divide all science frames by the appropriate flat
