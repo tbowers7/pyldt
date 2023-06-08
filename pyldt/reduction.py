@@ -172,7 +172,7 @@ class ImageDirectory:
         raw_data.mkdir(exist_ok=True)
 
         # Copy files to raw_data, overwrite if requested
-        for img in sorted(self.path.glob(f"{self.prefix}.*.fits")):
+        for img in sorted(self.path.glob(f"{self.prefix}.????.fits")):
             if (not raw_data.joinpath(img.name).exists()) or overwrite:
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
