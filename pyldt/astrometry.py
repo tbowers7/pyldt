@@ -54,7 +54,7 @@ def solve_field(
     add_center_coords=False,
     debug=False,
 ):
-    """solve_field Get a plate solution from Astrometry.Net
+    """Get a plate solution from Astrometry.Net
 
     Plate solutions not only provide accurate astrometry of objects in an
     image, they can also help to identify distortions or rotations in the
@@ -212,11 +212,13 @@ def solve_field(
 
     # If `add_center_coords`, add them:
     if add_center_coords:
-        center = use_wcs.pixel_to_world(ccd.header['NAXIS1']//2, ccd.header['NAXIS2']//2)
+        center = use_wcs.pixel_to_world(
+            ccd.header["NAXIS1"] // 2, ccd.header["NAXIS2"] // 2
+        )
         if isinstance(center, astropy.coordinates.SkyCoord):
-            ra, dec = center.to_string(style='hmsdms', precision=1).split()
-            ccd.header['RA'] = ra.replace('h',':').replace('m',":").replace('s','')
-            ccd.header['DEC'] = dec.replace('d',':').replace('m',":").replace('s','')
+            ra, dec = center.to_string(style="hmsdms", precision=1).split()
+            ccd.header["RA"] = ra.replace("h", ":").replace("m", ":").replace("s", "")
+            ccd.header["DEC"] = dec.replace("d", ":").replace("m", ":").replace("s", "")
 
     # Add some history information
     ccd.header["HISTORY"] = reduction.PKG_NAME
@@ -234,9 +236,13 @@ def solve_field(
 
 
 def validate_solution(
-    solved, lois, rtol=1e-05, atol=3e-07, debug=False
+    solved: astropy.wcs.WCS,
+    lois: astropy.wcs.WCS,
+    rtol: float = 1e-05,
+    atol: float = 3e-07,
+    debug: bool = False,
 ) -> tuple[astropy.wcs.WCS, bool]:
-    """validate_solution Validate the Astrometry.Net plate solution
+    """Validate the Astrometry.Net plate solution
 
     If the Astrometry.Net solution is way off, keep the original WCS.
     Otherwise, use the new solution.

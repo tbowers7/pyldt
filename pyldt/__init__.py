@@ -17,10 +17,10 @@ import os
 import warnings
 
 # Local Imports
-from .astrometry import *  # noqa
-from .reduction import *  # noqa
-from .utils import *  # noqa
-from .version import version
+from pyldt.astrometry import *  # noqa
+from pyldt.reduction import *  # noqa
+from pyldt.utils import *  # noqa
+from pyldt.version import version
 
 
 def short_warning(message, category, filename, lineno, file=None, line=None):
