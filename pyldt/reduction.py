@@ -404,7 +404,7 @@ class ImageDirectory:
         )
 
         if not bsub_cl.files:
-            print("Nothing to be done for flat_combine()!")
+            print("No bias-subtracted frames.  Skipping flat combine...")
             return
 
         if self.binning is None:
@@ -416,9 +416,9 @@ class ImageDirectory:
         flat_cl = bsub_cl.filter(
             ccdsum=self.binning, imagetyp=r"[a-z]+\s*flat", regex_match=True
         )
-        print(
-            f"These are the flat types found: {sorted(set(flat_cl.summary['imagetyp']))}"
-        )
+        print(f"Flat types found: {sorted(set(flat_cl.summary['imagetyp']))}")
+        # TODO: Do something here to separate SKY and DOME flats...
+
         # Set up a progress bar, so we can see how the process is going...
         prog_bar = tqdm(
             total=len(flat_cl.files), unit="frame", unit_scale=False, colour="yellow"
@@ -427,7 +427,9 @@ class ImageDirectory:
         # Normalize flat field images by the mean value
         for ccd, flat_fn in flat_cl.ccds(return_fname=True):
             # Perform the division (in a NaN-safe manner)
-            ccd = ccd.divide(np.nanmean(ccd), handle_meta="first_found")
+            ccd = ccd.divide(
+                np.nanmean(ccd) * u.Unit(ccd.header["BUNIT"]), handle_meta="first_found"
+            )
 
             # Update the header
             ccd.header["HISTORY"] = "Normalized flat saved: " + savetime()
@@ -458,16 +460,19 @@ class ImageDirectory:
                 flats = norm_cl.files_filtered(filters=filt, include_path=True)
 
                 print(f"Combining {len(flats)} flats for filter {filt}...")
-                cflat = ccdproc.combine(
-                    flats,
-                    method="average",
-                    sigma_clip=True,
-                    sigma_clip_dev_func=astropy.stats.mad_std,
-                    mem_limit=self.mem_limit,
+                # Perform the NaN-cleaned combination
+                cflat = self.clean_nans(
+                    ccdproc.combine(
+                        flats,
+                        method="average",
+                        sigma_clip=True,
+                        sigma_clip_dev_func=astropy.stats.mad_std,
+                        mem_limit=self.mem_limit,
+                    )
                 )
 
-                # Clean the NaN's
-                cflat = self.clean_nans(cflat)
+                # Make the QA plot(s)
+                self.QA_flat(ccdproc.ImageFileCollection(filenames=flats), cflat, filt)
 
                 # Add FITS keyword NCOMBINE and HISTORY
                 cflat.header.set(
@@ -590,23 +595,18 @@ class ImageDirectory:
         typesize : :obj:`float`
             Typesize for the output plots  (Default: 8)
         """
-        print(
-            f"Writing the Bias QA plots to {(self.path / 'QA' / 'bias_QA.png').resolve()}"
-        )
         # Create the QA directory, if needed
-        self.path.joinpath("QA").mkdir(parents=True, exist_ok=True)
+        qa_dir = (self.path / "QA").resolve()
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Writing the Bias QA plots to {(qa_dir / 'Bias_QA.png')}")
 
         # Construct the plotting environment
         _, axis = plt.subplots()
 
-        # Preamble
-        _, median, std = astropy.stats.sigma_clipped_stats(
-            next(input_icl.ccds()).data, sigma=5.0
-        )
-        # Plot ranges start and stop at multiples of 10, binsize is always 0.5
-        plotmin, plotmax = np.round((median + np.array([-5, 5]) * std) / 10) * 10
-        hist_bins = np.arange(plotmin, plotmax, 0.5)
+        # Preamble -- let's hope the first CCD is not messed up
+        hist_bins, binsz_str = self.get_qa_histbins(next(input_icl.ccds()))
         x_unit = output_bias.header["BUNIT"]
+
         # Loop through the files in the IFC and make histograms
         for ccd in input_icl.ccds():
             axis.hist(
@@ -617,7 +617,7 @@ class ImageDirectory:
                 alpha=0.35,
             )
 
-        # Work the combined bias
+        # Histogram the combined bias, fit and plot a gaussian
         npix, bins, _ = axis.hist(
             output_bias.data.flatten(),
             bins=hist_bins,
@@ -633,6 +633,8 @@ class ImageDirectory:
             color="red",
             label="Gaussian Fit to Combined Bias",
         )
+
+        # Add text with various statistics
         axis.text(
             0.1,
             0.9,
@@ -643,12 +645,7 @@ class ImageDirectory:
             fontsize=typesize,
         )
         # Get some statistics
-        n_outliers = np.count_nonzero(
-            np.where(
-                (output_bias.data.flatten() < (popt[1] - 5 * popt[2]))
-                | (output_bias.data.flatten() > (popt[1] + 5 * popt[2]))
-            )
-        )
+        n_outliers = np.sum(np.abs(output_bias.data.flatten() - popt[1]) > 5 * popt[2])
         axis.text(
             0.1,
             0.75,
@@ -657,27 +654,168 @@ class ImageDirectory:
             fontsize=typesize,
         )
 
-        # Set titles
-        axis.set_ylabel(
-            f"N pixels per {np.diff(bins)[0]} {x_unit} bin", fontsize=typesize
-        )
+        # Set titles & legend
+        axis.set_ylabel(f"N pixels per {binsz_str} {x_unit} bin", fontsize=typesize)
         axis.set_xlabel(f"Pixel Value ({x_unit})", fontsize=typesize)
         axis.set_title(
             f"Bias Frame QA: {len(input_icl.files)} frames", fontsize=typesize + 2
         )
-
         axis.legend(fontsize=typesize)
+
+        # Finish up and save
         utils.set_std_tickparams(axis, typesize)
         plt.tight_layout()
-        plt.savefig(self.path / "QA" / "bias_QA.pdf")
-        plt.savefig(self.path / "QA" / "bias_QA.png")
+        for suffix in ["pdf", "png"]:
+            plt.savefig(qa_dir / f"Bias_QA.{suffix}")
         plt.close()
 
-    def QA_flat(self):
+    def QA_flat(
+        self,
+        input_icl: ccdproc.ImageFileCollection,
+        output_flat: astropy.nddata.CCDData,
+        filtername: str,
+        typesize: float = 8,
+    ):
         """Produce QA plots for the flat combination
 
-        _extended_summary_
+        This should make pixel histograms for each of the input flat frames and
+        for the combined frame.
+
+        Parameters
+        ----------
+        input_icl : :obj:`~ccdproc.ImageFileCollection`
+            The input flats collection for the combination
+        output_flat : :obj:`~astropy.nddata.CCDData`
+            The output combined flat
+        filtername : :obj:`str`
+            The name of the filter for this set of flats
+        typesize : :obj:`float`
+            Typesize for the output plots  (Default: 8)
         """
+        # Create the QA directory, if needed
+        qa_dir = (self.path / "QA").resolve()
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Writing the Flat QA plots to  {(qa_dir / f'Flat_{filtername}_QA.png')}")
+
+        # Construct the plotting environment
+        _, axis = plt.subplots()
+
+        # Preamble -- let's hope the first CCD is not messed up
+        hist_bins, binsz_str = self.get_qa_histbins(next(input_icl.ccds()))
+        x_unit = (
+            "unitless"
+            if output_flat.header["BUNIT"] == ""
+            else output_flat.header["BUNIT"]
+        )
+
+        # Loop through the files in the IFC and make histograms
+        for ccd in input_icl.ccds():
+            axis.hist(
+                ccd.data.flatten(),
+                bins=hist_bins,
+                histtype="step",
+                linewidth=0.8,
+                alpha=0.35,
+            )
+
+        # Histogram the combined flat, fit and plot a gaussian
+        npix, bins, _ = axis.hist(
+            output_flat.data.flatten(),
+            bins=hist_bins,
+            histtype="step",
+            label="Combined Flat",
+            linewidth=2.0,
+        )
+        centers = (bins[:-1] + bins[1:]) / 2
+        popt, _ = obstools.utils.gaussfit(centers, npix)
+        axis.plot(
+            centers,
+            obstools.utils.gaussian_function(centers, *popt),
+            color="red",
+            label="Gaussian Fit to Combined Flat",
+        )
+
+        # Add text with various statistics
+        axis.text(
+            0.1,
+            0.9,
+            rf"Gaussian $\mu$ = {popt[1]:.2f} {x_unit}"
+            "\n"
+            rf"Gaussian $\sigma$ = {popt[2]:.2f} {x_unit}",
+            transform=axis.transAxes,
+            fontsize=typesize,
+        )
+        # Get some statistics
+        n_outliers = np.sum(np.abs(output_flat.data.flatten() - popt[1]) > 5 * popt[2])
+        axis.text(
+            0.1,
+            0.75,
+            rf"Pixels beyond 5$\sigma$ = {n_outliers / output_flat.data.size * 100:.2f}%",
+            transform=axis.transAxes,
+            fontsize=typesize,
+        )
+
+        # Set titles & legend
+        axis.set_ylabel(f"N pixels per {binsz_str} {x_unit} bin", fontsize=typesize)
+        axis.set_xlabel(f"Pixel Value ({x_unit})", fontsize=typesize)
+        axis.set_title(
+            f"Flat Frame ({filtername} filter) QA: {len(input_icl.files)} frames",
+            fontsize=typesize + 2,
+        )
+        axis.legend(fontsize=typesize)
+
+        # Finish up and save
+        utils.set_std_tickparams(axis, typesize)
+        plt.tight_layout()
+        for suffix in ["pdf", "png"]:
+            plt.savefig(qa_dir / f"Flat_{filtername}_QA.{suffix}")
+        plt.close()
+
+    @staticmethod
+    def get_qa_histbins(ccd: astropy.nddata.CCDData) -> np.ndarray:
+        """Generate sensible histogram bins for QA plots
+
+        There should be something like 100 bins (give or take) across the
+        displayed histogram.  The bin sizes should be some simple, human-
+        thinkable value (like 0.5 or 10), and the displayed range should
+        be something like median ± 5σ, rounded to some simple, human-thinkable
+        value (like nearest 10 or 1000).
+
+        Parameters
+        ----------
+        ccd : :obj:`~astropy.nddata.CCDData`
+            The CCDData object for which to generate histogram bins
+
+        Returns
+        -------
+        :obj:`~numpy.ndarray`
+            The array of histogram bin edges to use
+        """
+        # First, get the (sigma-clipped) median and std of the data
+        _, median, std = astropy.stats.sigma_clipped_stats(ccd.data, sigma=5.0)
+
+        # Compute the raw range from `median - 5σ` to `median + 5σ`
+        raw_range = median + np.array([-5, 5]) * std
+
+        # Given that we want ~100 bins in this range, compute the finished binsize
+        logbins = np.array(
+            [np.log10([1, 2, 5]) + b for b in np.arange(-5, 6)]
+        ).flatten()
+        raw_logbin = np.log10(np.diff(raw_range) / 100)
+        binsize = 10 ** (logbins[np.abs(logbins - raw_logbin).argmin()])
+
+        # Compute the sensible plot range start & stop positions
+        # The "multiples of" that the plotmin and plotmax should be are
+        #  computed as the floor power of 10 of 1/2 the span of `raw_range`
+        mult_factor = 10 ** np.floor(np.log10(np.diff(raw_range) / 2.0))
+        plotmin, plotmax = np.round(raw_range / mult_factor) * mult_factor
+
+        # Next, determine the binsize string, precision based on value
+        prec = np.maximum(-np.floor(np.log10(binsize)), 0).astype(int)
+        binsz_str = f"{binsize:.{prec}f}"
+
+        # Return the array from `plotmin` to `plotmax` in steps of `binsize`
+        return np.arange(plotmin, plotmax, binsize), binsz_str
 
     @staticmethod
     def add_package_versions(hdr):
