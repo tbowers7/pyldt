@@ -46,8 +46,12 @@ import astropy.stats
 import astropy.units as u
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc
+import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
+
+# Lowell Packages
+import obstools.utils
 
 # Internal Imports
 from pyldt import utils
@@ -170,11 +174,18 @@ class ImageDirectory:
                         ccd.header.get("ARDNS_01", 0.0),
                         "Read Noise for amplifier 01",
                     )
+                    # Fix the TRIMSEC & BIASSEC keywords to remove the lowest
+                    #  60 rows (unbinned) because they stink
+                    for section in ["TRIMSEC", "BIASSEC"]:
+                        xsec, ysec = ccd.header[section].strip("[]").split(",")
+                        ymin, ymax = np.array(ysec.split(":"), dtype=int)
+                        ymin = 60 // ccd.header["ADELY_01"] + 1
+                        ccd.header[section] = f"[{xsec},{ymin}:{ymax}]"
 
             # Fix depricated FITS keyword
             if "RADECSYS" in ccd.header:
                 ccd.header.rename_keyword("RADECSYS", "RADESYSa")
-            ccd.write(self.path.joinpath(fname), overwrite=True)
+            ccd.write(self.path / fname, overwrite=True)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -197,13 +208,20 @@ class ImageDirectory:
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
-    def bias_combine(self, keep_trimmed: bool = False, gain_correct: bool = True):
+    def bias_combine(
+        self,
+        keep_orig: bool = False,
+        keep_trimmed: bool = False,
+        gain_correct: bool = True,
+    ):
         """Finds and combines bias frames with the indicated binning
 
         _extended_summary_
 
         Parameters
         ----------
+        keep_orig : :obj:`bool`, optional
+            Keep the original (`i.e.`, input) files?  (Default: False)
         keep_trimmed : :obj:`bool`, optional
             Keep the trimmed (`i.e.`, intermediate) files?  (Default: False)
         gain_correct : :obj:`bool`, optional
@@ -222,7 +240,11 @@ class ImageDirectory:
         self.icl.refresh()
 
         # Set up a progress bar, so we can see how the process is going...
-        bias_files = self.icl.files_filtered(imagetyp="bias")
+        try:
+            bias_files = self.icl.files_filtered(imagetyp="bias")
+        except TypeError:
+            print("No bias frames found!")
+            return
         prog_bar = tqdm(
             total=len(bias_files), unit="frame", unit_scale=False, colour="#808080"
         )
@@ -238,13 +260,12 @@ class ImageDirectory:
             ccd.header["HISTORY"] = PKG_NAME
             ccd.header["HISTORY"] = "Trimmed bias saved: " + savetime()
             ccd.header["HISTORY"] = f"Original filename: {file_name}"
+            ccd.header = self.add_package_versions(ccd.header)
 
             # Save the result (suffix = 't'); delete the input file
-            ccd.header = self.add_package_versions(ccd.header)
-            ccd.write(
-                self.path.joinpath(f"{file_name[:-5]}t{file_name[-5:]}"), overwrite=True
-            )
-            self.path.joinpath(file_name).unlink()
+            ccd.write(self.path / f"{file_name[:-5]}t{file_name[-5:]}", overwrite=True)
+            if not keep_orig:
+                self.path.joinpath(file_name).unlink()
 
             # Update the progress bar
             prog_bar.update(1)
@@ -256,47 +277,54 @@ class ImageDirectory:
             self.path, glob_include=f"{self.prefix}.*t.fits"
         )
 
-        # If we have a fresh list of trimmed biases to work with...
-        if t_bias_cl.files:
-            if self.debug:
-                print("Doing average combine now...")
-            comb_bias = ccdproc.combine(
-                [self.path.joinpath(fn) for fn in t_bias_cl.files],
+        # If no trimmed biases, return now
+        if not t_bias_cl.files:
+            return
+
+        if self.debug:
+            print("Doing average combine now...")
+
+        # Perform the NaN-cleaned combination
+        comb_bias = self.clean_nans(
+            ccdproc.combine(
+                [self.path / fn for fn in t_bias_cl.files],
                 method="average",
                 sigma_clip=True,
                 sigma_clip_dev_func=astropy.stats.mad_std,
                 mem_limit=self.mem_limit,
             )
+        )
 
-            # Clean the NaN's
-            comb_bias = self.clean_nans(comb_bias)
+        # Make the QA plot(s)
+        self.QA_bias(t_bias_cl, comb_bias)
 
-            # Add FITS keyword NCOMBINE and HISTORY
-            comb_bias.header.set(
-                "ncombine", len(t_bias_cl.files), "# of input images in combination"
-            )
-            comb_bias.header["HISTORY"] = "Combined bias created: " + savetime()
-            comb_bias.header["HISTORY"] = (
-                "Average combined " + f"{len(t_bias_cl.files)} files:"
-            )
+        # Add FITS keyword NCOMBINE and HISTORY
+        comb_bias.header.set(
+            "ncombine", len(t_bias_cl.files), "# of input images in combination"
+        )
+        comb_bias.header["HISTORY"] = "Combined bias created: " + savetime()
+        comb_bias.header["HISTORY"] = (
+            "Average combined " + f"{len(t_bias_cl.files)} files:"
+        )
+        for fname in t_bias_cl.files:
+            comb_bias.header["HISTORY"] = fname
 
+        # Save the result; delete the input files
+        comb_bias.header = self.add_package_versions(comb_bias.header)
+        comb_bias.write(self.path / self.zerofn, overwrite=True)
+        if not keep_trimmed:
             for fname in t_bias_cl.files:
-                comb_bias.header["HISTORY"] = fname
+                self.path.joinpath(fname).unlink()
 
-            # Save the result; delete the input files
-            comb_bias.header = self.add_package_versions(comb_bias.header)
-            comb_bias.write(self.path.joinpath(self.zerofn), overwrite=True)
-            if not keep_trimmed:
-                for fname in t_bias_cl.files:
-                    self.path.joinpath(fname).unlink()
-
-    def bias_subtract(self, gain_correct: bool = True):
+    def bias_subtract(self, keep_orig: bool = False, gain_correct: bool = True):
         """Subtract the combined bias from the images
 
         _extended_summary_
 
         Parameters
         ----------
+        keep_orig : :obj:`bool`, optional
+            Keep the original (`i.e.`, input) files?  (Default: False)
         gain_correct : :obj:`bool`, optional
             Multiply by the CCD gain before returning?  (Default: True)
         """
@@ -313,7 +341,7 @@ class ImageDirectory:
         if not self.path.joinpath(self.zerofn).is_file():
             self.bias_combine()
         try:
-            combined_bias = astropy.nddata.CCDData.read(self.path.joinpath(self.zerofn))
+            combined_bias = astropy.nddata.CCDData.read(self.path / self.zerofn)
         except FileNotFoundError:
             # Just skip the bias subtraction
             print(f"Skipping bias subtraction for lack of {self.zerofn}")
@@ -342,10 +370,9 @@ class ImageDirectory:
 
             # Save the result (suffix = 'b'); delete input file
             ccd.header = self.add_package_versions(ccd.header)
-            ccd.write(
-                self.path.joinpath(f"{file_name[:-5]}b{file_name[-5:]}"), overwrite=True
-            )
-            self.path.joinpath(file_name).unlink()
+            ccd.write(self.path / f"{file_name[:-5]}b{file_name[-5:]}", overwrite=True)
+            if not keep_orig:
+                self.path.joinpath(file_name).unlink()
 
             # Update the progress bar
             prog_bar.update(1)
@@ -389,6 +416,9 @@ class ImageDirectory:
         flat_cl = bsub_cl.filter(
             ccdsum=self.binning, imagetyp=r"[a-z]+\s*flat", regex_match=True
         )
+        print(
+            f"These are the flat types found: {sorted(set(flat_cl.summary['imagetyp']))}"
+        )
         # Set up a progress bar, so we can see how the process is going...
         prog_bar = tqdm(
             total=len(flat_cl.files), unit="frame", unit_scale=False, colour="yellow"
@@ -405,9 +435,7 @@ class ImageDirectory:
 
             # Save the result (suffix = 'n'); delete the input file
             ccd.header = self.add_package_versions(ccd.header)
-            ccd.write(
-                self.path.joinpath(f"{flat_fn[:-6]}n{flat_fn[-5:]}"), overwrite=True
-            )
+            ccd.write(self.path / f"{flat_fn[:-6]}n{flat_fn[-5:]}", overwrite=True)
             if not keep_subtracted:
                 self.path.joinpath(flat_fn).unlink()
 
@@ -429,7 +457,7 @@ class ImageDirectory:
             for filt in unique_filters:
                 flats = norm_cl.files_filtered(filters=filt, include_path=True)
 
-                print(f"Combining flats for filter {filt}...")
+                print(f"Combining {len(flats)} flats for filter {filt}...")
                 cflat = ccdproc.combine(
                     flats,
                     method="average",
@@ -457,21 +485,27 @@ class ImageDirectory:
                 if self.debug:
                     print(f"Saving combined flat as {flat_fn}")
                 cflat.header = self.add_package_versions(cflat.header)
-                cflat.write(self.path.joinpath(flat_fn), overwrite=True)
-                for fname in flats:
-                    # Path name is already included
-                    if not keep_normalized:
+                cflat.write(self.path / flat_fn, overwrite=True)
+                if not keep_normalized:
+                    for fname in flats:
+                        # Path name is already included
                         pathlib.Path(fname).unlink()
 
         else:
             print("No flats to be combined.")
 
-    def divide_by_flat(self):
+    def divide_by_flat(self, keep_subtracted: bool = False):
         """Divide frames by the appropriate flatfield
 
         Divides all LMI science frames by the appropriate flat field image
         This method is LMI-specific, rather than being wrapper for a more
         general function.  Basic emulation of IRAF's ccdproc/flatcor function.
+
+        Parameters
+        ----------
+        keep_subtracted : :obj:`bool`, optional
+            Keep the bias-subtracted (`i.e.`, input) image?  (Default: False)
+
         """
         # Load the list of combined flats and bias-subtracted data frames
         flat_cl = ccdproc.ImageFileCollection(
@@ -492,7 +526,9 @@ class ImageDirectory:
             for filt in sorted(list(flat_cl.summary["filters"])):
                 # Load in the combined flat for this filter
                 if self.debug:
-                    print(f"Dividing by combined flat for filter: {filt}")
+                    print(
+                        f"Dividing science frames by combined flat for filter: {filt}"
+                    )
                 combined_flat, mflat_fn = next(
                     flat_cl.ccds(ccdsum=self.binning, filters=filt, return_fname=True)
                 )
@@ -523,21 +559,119 @@ class ImageDirectory:
                     # Save the result (suffix = 'f'); delete the input file
                     ccd.header = self.add_package_versions(ccd.header)
                     ccd.write(
-                        self.path.joinpath(f"{sci_fn[:-6]}f{sci_fn[-5:]}"),
+                        self.path / f"{sci_fn[:-6]}f{sci_fn[-5:]}",
                         overwrite=True,
                     )
-                    self.path.joinpath(sci_fn).unlink()
+                    if not keep_subtracted:
+                        self.path.joinpath(sci_fn).unlink()
 
                     # Update the progress bar
                     prog_bar.update(1)
                 # Close the progress bar, end of loop
                 prog_bar.close()
 
-    def QA_bias(self):
+    def QA_bias(
+        self,
+        input_icl: ccdproc.ImageFileCollection,
+        output_bias: astropy.nddata.CCDData,
+        typesize: float = 8,
+    ):
         """Produce QA plots for the bias combination
 
-        _extended_summary_
+        This should make pixel histograms for each of the input bias frames and
+        for the combined frame.
+
+        Parameters
+        ----------
+        input_icl : :obj:`~ccdproc.ImageFileCollection`
+            The input biases collection for the combination
+        output_bias : :obj:`~astropy.nddata.CCDData`
+            The output combined bias
+        typesize : :obj:`float`
+            Typesize for the output plots  (Default: 8)
         """
+        print(
+            f"Writing the Bias QA plots to {(self.path / 'QA' / 'bias_QA.png').resolve()}"
+        )
+        # Create the QA directory, if needed
+        self.path.joinpath("QA").mkdir(parents=True, exist_ok=True)
+
+        # Construct the plotting environment
+        _, axis = plt.subplots()
+
+        # Preamble
+        _, median, std = astropy.stats.sigma_clipped_stats(
+            next(input_icl.ccds()).data, sigma=5.0
+        )
+        # Plot ranges start and stop at multiples of 10, binsize is always 0.5
+        plotmin, plotmax = np.round((median + np.array([-5, 5]) * std) / 10) * 10
+        hist_bins = np.arange(plotmin, plotmax, 0.5)
+        x_unit = output_bias.header["BUNIT"]
+        # Loop through the files in the IFC and make histograms
+        for ccd in input_icl.ccds():
+            axis.hist(
+                ccd.data.flatten(),
+                bins=hist_bins,
+                histtype="step",
+                linewidth=0.8,
+                alpha=0.35,
+            )
+
+        # Work the combined bias
+        npix, bins, _ = axis.hist(
+            output_bias.data.flatten(),
+            bins=hist_bins,
+            histtype="step",
+            label="Combined Bias",
+            linewidth=2.0,
+        )
+        centers = (bins[:-1] + bins[1:]) / 2
+        popt, _ = obstools.utils.gaussfit(centers, npix)
+        axis.plot(
+            centers,
+            obstools.utils.gaussian_function(centers, *popt),
+            color="red",
+            label="Gaussian Fit to Combined Bias",
+        )
+        axis.text(
+            0.1,
+            0.9,
+            rf"Gaussian $\mu$ = {popt[1]:.2f} {x_unit}"
+            "\n"
+            rf"Gaussian $\sigma$ = {popt[2]:.2f} {x_unit}",
+            transform=axis.transAxes,
+            fontsize=typesize,
+        )
+        # Get some statistics
+        n_outliers = np.count_nonzero(
+            np.where(
+                (output_bias.data.flatten() < (popt[1] - 5 * popt[2]))
+                | (output_bias.data.flatten() > (popt[1] + 5 * popt[2]))
+            )
+        )
+        axis.text(
+            0.1,
+            0.75,
+            rf"Pixels beyond 5$\sigma$ = {n_outliers / output_bias.data.size * 100:.2f}%",
+            transform=axis.transAxes,
+            fontsize=typesize,
+        )
+
+        # Set titles
+        axis.set_ylabel(
+            f"N pixels per {np.diff(bins)[0]} {x_unit} bin", fontsize=typesize
+        )
+        axis.set_xlabel(f"Pixel Value ({x_unit})", fontsize=typesize)
+        axis.set_title(
+            f"Bias Frame QA: {len(input_icl.files)} frames", fontsize=typesize + 2
+        )
+
+        axis.legend(fontsize=typesize)
+        utils.set_std_tickparams(axis, typesize)
+        plt.tight_layout()
+        plt.savefig(self.path / "QA" / "bias_QA.pdf")
+        plt.savefig(self.path / "QA" / "bias_QA.png")
+        plt.close()
 
     def QA_flat(self):
         """Produce QA plots for the flat combination
@@ -872,8 +1006,7 @@ def imcombine(
             raise FileNotFoundError(f"File {fname} does not exist.")
 
     # Determine combine method (default = 'median')
-    if combine != "median" or combine != "mean":
-        combine = "median"
+    combine = "median" if combine not in ["median", "mean"] else combine
 
     # Create an ImgFileColl using the input files
     file_cl = ccdproc.ImageFileCollection(filenames=files)
@@ -937,7 +1070,7 @@ def imcombine(
 
 
 def parse_lois_ampids(hdr):
-    """parse_lois_ampids Parse the LOIS amplifier IDs
+    """Parse the LOIS amplifier IDs
 
     LOIS is particular about how it records which amplifiers are used to read
     out the CCD.  Most of the time, users will use a single amplifier, whose ID
@@ -1045,7 +1178,7 @@ def trim_oscan(
 
 
 def wrap_trim_oscan(ccd, gain_correct=True):
-    """wrap_trim_oscan Wrap the trim_oscan() function to handle multiple amps
+    """Wrap the :func:`trim_oscan` function to handle multiple amplifiers
 
     This function will perform the magic of stitching together multi-amplifier
     reads.  There may be instrument-specific issues related to this, but it is
@@ -1074,8 +1207,8 @@ def wrap_trim_oscan(ccd, gain_correct=True):
     # Shorthand
     hdr = ccd.header
 
-    # The "usual" case, pass-through from `trim_oscan()`, with optional
-    #   gain correction
+    # The "usual" case, straight pass-through from `trim_oscan()`, with
+    #   optional gain correction
     if hdr["NUMAMP"] == 1:
         trimmed = trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"])
         if gain_correct and trimmed.unit == u.adu:

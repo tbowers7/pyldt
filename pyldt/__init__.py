@@ -20,7 +20,6 @@ import warnings
 from pyldt.astrometry import *  # noqa
 from pyldt.reduction import *  # noqa
 from pyldt.utils import *  # noqa
-from pyldt.version import version
 
 
 def short_warning(message, category, filename, lineno, file=None, line=None):
@@ -31,7 +30,3 @@ def short_warning(message, category, filename, lineno, file=None, line=None):
 
 
 warnings.formatwarning = short_warning
-
-
-# Set version
-__version__ = version
