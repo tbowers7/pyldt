@@ -383,6 +383,7 @@ class ImageDirectory:
         self,
         keep_subtracted: bool = False,
         keep_normalized: bool = False,
+        norm_use_center_only: bool = True,
     ):
         """Combine flat field frames
 
@@ -396,6 +397,9 @@ class ImageDirectory:
             Keep the bias-subtracted (`i.e.`, input) image?  (Default: False)
         keep_normalized : :obj:`bool`, optional
             Keep the normalized (`i.e.`, intermediate) image?  (Default: False)
+        norm_use_center_only : :obj:`bool`, optional
+            Use the center 50% (by pixels) of the image only for flat
+            normalization?  (Default: True)
         """
 
         # Load the list of bias-subtracted data frames -- check binning
@@ -426,9 +430,22 @@ class ImageDirectory:
 
         # Normalize flat field images by the mean value
         for ccd, flat_fn in flat_cl.ccds(return_fname=True):
+            # Get the indices of the region over which to measure the mean
+            if norm_use_center_only:
+                # Select the inner 50% of pixels in the image
+                cen = np.array(ccd.data.shape) // 2
+                delta = (cen // np.sqrt(2)).astype(int)
+                img_slice = np.s_[
+                    cen[0] - delta[0] : cen[0] + delta[0] + 1,
+                    cen[1] - delta[1] : cen[1] + delta[1] + 1,
+                ]
+            else:
+                img_slice = np.s_[:, :]
+
             # Perform the division (in a NaN-safe manner)
             ccd = ccd.divide(
-                np.nanmean(ccd) * u.Unit(ccd.header["BUNIT"]), handle_meta="first_found"
+                np.nanmean(ccd[img_slice]) * u.Unit(ccd.header["BUNIT"]),
+                handle_meta="first_found",
             )
 
             # Update the header
@@ -727,7 +744,8 @@ class ImageDirectory:
             linewidth=2.0,
         )
         centers = (bins[:-1] + bins[1:]) / 2
-        popt, _ = obstools.utils.gaussfit(centers, npix)
+        p0 = [np.amax(npix), centers[np.argmax(npix)], 0.1]
+        popt, _ = obstools.utils.gaussfit(centers, npix, estimates=p0)
         axis.plot(
             centers,
             obstools.utils.gaussian_function(centers, *popt),
@@ -798,6 +816,7 @@ class ImageDirectory:
         raw_range = median + np.array([-5, 5]) * std
 
         # Given that we want ~100 bins in this range, compute the finished binsize
+        # Bin sizes may be powers of 10 times [1, 2, 5]
         logbins = np.array(
             [np.log10([1, 2, 5]) + b for b in np.arange(-5, 6)]
         ).flatten()
