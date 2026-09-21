@@ -1,16 +1,8 @@
-# -*- coding: utf-8 -*-
-#
-#  This file is part of PyLDT.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
+# SPDX-License-Identifier: MPL-2.0
 #  Created on 26-Oct-2020
-#
 #  @author: tbowers
-
-"""PyLDT contains image calibration routines for LDT facility instruments
+"""
+PyLDT contains image calibration routines for LDT facility instruments
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
@@ -26,8 +18,10 @@ Should be run in an environment containing:
     * SciPy
 """
 
+from __future__ import annotations
+
 # Built-In Libraries
-import os
+import pathlib
 import warnings
 
 # Third-Party Libraries
@@ -40,10 +34,16 @@ import scipy.signal
 # Internal Imports
 
 
-def flexure_driver(data_dir, grating="DV2", save_fn="test.fits"):
-    """flexure_driver Driving routine for the analysis
+def flexure_driver(
+    data_dir: str | pathlib.Path,
+    grating: str = "DV2",
+    save_fn: str | pathlib.Path = "test.fits",
+) -> astropy.table.Table | None:
+    """
+    Run the DeVeny flexure analysis.
 
-    [extended_summary]
+    Load comparison images, measure and validate their line positions, compute
+    offsets, and save the resulting table.
 
     Parameters
     ----------
@@ -83,10 +83,14 @@ def flexure_driver(data_dir, grating="DV2", save_fn="test.fits"):
     return table
 
 
-def load_images(data_dir, grating="DV2"):
-    """load_images Load in the images associated with DATA_DIR and grating
+def load_images(
+    data_dir: str | pathlib.Path, grating: str = "DV2"
+) -> ccdproc.ImageFileCollection:
+    """
+    Load comparison images for a grating.
 
-    [extended_summary]
+    Telescope altitude values are rounded in the source headers before the
+    collection is filtered by grating.
 
     Parameters
     ----------
@@ -94,8 +98,6 @@ def load_images(data_dir, grating="DV2"):
         The directory containing the data to analyze
     grating : `str`, optional
         The grating ID to use.  [Default: DV2]
-    obstype : `str`, optional
-        FITS header OBSTYPE to use.  Pass None for all.  [Default: comparison]
 
     Returns
     -------
@@ -111,16 +113,20 @@ def load_images(data_dir, grating="DV2"):
     # Clean up the telescope altitude
     for ccd, fname in icl.ccds(obstype="comparison", return_fname=True):
         ccd.header["telalt"] = np.round(ccd.header["telalt"])
-        ccd.write(os.path.join(data_dir, fname), overwrite=True)
+        ccd.write(pathlib.Path(data_dir, fname), overwrite=True)
 
     # Return an ImageFileCollection filtered by the grating desired
     return icl.filter(grating=gratid[grating])
 
 
-def get_line_positions(icl, win=11, thresh=5000.0):
-    """get_line_positions Compute the line positions for the images in the icl
+def get_line_positions(
+    icl: ccdproc.ImageFileCollection, win: int = 11, thresh: float = 5000.0
+) -> astropy.table.Table:
+    """
+    Compute line positions for images in a collection.
 
-    [extended_summary]
+    Extract a central spectrum from every non-bias comparison image and store
+    its detected line centers with the relevant observing metadata.
 
     Parameters
     ----------
@@ -136,7 +142,7 @@ def get_line_positions(icl, win=11, thresh=5000.0):
     `astropy.table.table.Table`
         Table of line positions with associated metadata
     """
-    # Put everything into a list of dicionaties
+    # Put everything into a list of dictionaries
     flex_line_positions = []
 
     # This will only give the x values of the fits file.
@@ -188,8 +194,9 @@ def get_line_positions(icl, win=11, thresh=5000.0):
     return astropy.table.Table(flex_line_positions)
 
 
-def validate_lines(table):
-    """validate_lines Validate the found lines to produce a uniform set
+def validate_lines(table: astropy.table.Table) -> astropy.table.Table:
+    """
+    Reduce detected lines to a set shared by every image.
 
     The number of lines identified will vary form image to image.  This
     function validates the lines to return the set of lines found in ALL
@@ -249,14 +256,16 @@ def validate_lines(table):
     return table
 
 
-def compute_line_deltas(table):
-    """compute_line_deltas Compute line shifts and add to Table
+def compute_line_deltas(table: astropy.table.Table) -> astropy.table.Table:
+    """
+    Compute line shifts and add them to a table.
 
-    [extended_summary]
+    Shifts are calculated relative to both the first image and the mean line
+    position across all images.
 
     Parameters
     ----------
-    t : `astropy.table.table.Table`
+    table : `astropy.table.table.Table`
         AstroPy Table as produced by validate_lines()
         Note: Must be VALIDATED, so `xpos` are arrays, not strings
 
@@ -290,24 +299,28 @@ def compute_line_deltas(table):
 #   immediate use case.
 
 
-def extract_spectrum(spectrum, traces, nspix):
-    """extract_spectrum Object spectral extraction routine
+def extract_spectrum(
+    spectrum: np.ndarray, traces: np.ndarray, nspix: int
+) -> np.ndarray | int:
+    """
+    Extract spectra along one or more traces.
 
-    [extended_summary]
+    Each trace is boxcar averaged over ``nspix`` spatial pixels.
 
     Parameters
     ----------
-    spectrum : [type]
+    spectrum : numpy.ndarray
         2D spectral image
-    traces : [type]
+    traces : numpy.ndarray
         Trace line(s) along which to extract the spectrum
-    nspix : [type]
+    nspix : int
         Window width across which to extract the spectrum
 
     Returns
     -------
-    [type]
-        2-d array of spectra of individual orders
+    numpy.ndarray or int
+        Two-dimensional array of extracted spectra, or zero when ``traces``
+        is scalar.
     """
     # Set # orders, size of each order based on traces dimensionality; 0 -> return
     if traces.ndim == 0:
@@ -324,14 +337,15 @@ def extract_spectrum(spectrum, traces, nspix):
     return spectra
 
 
-def gaussfit_func(x, a0, a1, a2, a3):
-    """gaussfit_func Simple Gaussian function for fitting line profiles
-
-    [extended_summary]
+def gaussfit_func(
+    x: np.ndarray, a0: float, a1: float, a2: float, a3: float
+) -> np.ndarray:
+    """
+    Evaluate a Gaussian line profile with a constant background.
 
     Parameters
     ----------
-    x : [type]
+    x : numpy.ndarray
         Array of x values for the fit
     a0 : `float`
         Amplitude of the Gaussian
@@ -344,7 +358,7 @@ def gaussfit_func(x, a0, a1, a2, a3):
 
     Returns
     -------
-    [type]
+    numpy.ndarray
         Array of y values corresponding to input a's and x
     """
     # Silence RuntimeWarning for overflow, this function only
@@ -354,17 +368,26 @@ def gaussfit_func(x, a0, a1, a2, a3):
     return a0 * np.exp(-(z**2) / 2.0) + a3
 
 
-def find_lines(image, thresh=20.0, findmax=50, minsep=11, fit_window=15, verbose=False):
-    """find_lines Automatically find and centroid lines in a 1-row image
+def find_lines(
+    image: np.ndarray,
+    thresh: float = 20.0,
+    findmax: int = 50,
+    minsep: int = 11,
+    fit_window: int = 15,
+    verbose: bool = False,
+) -> tuple[np.ndarray, list[float]]:
+    """
+    Find and centroid emission lines in a one-row image.
 
-    [extended_summary]
+    Candidate peaks above the background threshold are fit with Gaussian
+    profiles to obtain subpixel centers and widths.
 
     Parameters
     ----------
-    image : [type]
-        [description]
+    image : numpy.ndarray
+        One-row extracted spectrum.
     thresh : `float`, optional
-        Threshold above which to indentify lines [Default: 20 DN above bkgd]
+        Threshold above which to identify lines [Default: 20 DN above bkgd]
     findmax : `int`, optional
         Maximum number of lines to find [Default: 50]
     minsep : `int`, optional
@@ -376,9 +399,8 @@ def find_lines(image, thresh=20.0, findmax=50, minsep=11, fit_window=15, verbose
 
     Returns
     -------
-    `tuple: float, float`
-        centers: List of line centers (pixel #)
-        fwhm: The computed FWHM
+    tuple of numpy.ndarray and list of float
+        Array of line centers in pixels and their fitted FWHM values.
     """
     # Silence OptimizeWarning, this function only
     warnings.simplefilter("ignore", scipy.optimize.OptimizeWarning)
@@ -461,24 +483,24 @@ def find_lines(image, thresh=20.0, findmax=50, minsep=11, fit_window=15, verbose
     return (centers, fwhm)
 
 
-def specavg(spectrum, trace, wsize):
-    """specavg Extract an average spectrum along trace of size wsize
-
-    [extended_summary]
+def specavg(spectrum: np.ndarray, trace: np.ndarray, wsize: int) -> np.ndarray | int:
+    """
+    Extract an average spectrum along a trace.
 
     Parameters
     ----------
-    spectrum : [type]
+    spectrum : numpy.ndarray
         Input Spectrum
-    trace : [type]
+    trace : numpy.ndarray
         The trace along which to extract
     wsize : `int`
         Window size of the extraction (usually odd)
 
     Returns
     -------
-    [type]
-        One-dimensional extracted spectrum
+    numpy.ndarray or int
+        Extracted spectrum as a row array, or zero when ``spectrum`` is
+        scalar.
     """
     # If ndim = 0, return, otherwise get nx
     if spectrum.ndim == 0:

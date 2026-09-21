@@ -1,16 +1,8 @@
-# -*- coding: utf-8 -*-
-#
-#  This file is part of PyLDT.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
+# SPDX-License-Identifier: MPL-2.0
 #  Created on 26-Oct-2020
-#
 #  @author: tbowers
-
-"""PyLDT contains image calibration routines for LDT facility instruments
+"""
+PyLDT contains image calibration routines for LDT facility instruments
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
@@ -18,7 +10,11 @@ http://www.lowell.edu
 This module contains various image utility routines.
 """
 
+from __future__ import annotations
+
 # Built-In Libraries
+import pathlib
+import typing
 
 # 3rd Party Libraries
 import astropy.nddata
@@ -29,20 +25,35 @@ import numpy as np
 from obstools import deveny_grangle
 
 
-def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True, objname=None):
-    """Take a DeVeny flatfield frame and make it look like a star
+def make_flat_as_star(
+    flatfn: str | pathlib.Path | astropy.nddata.CCDData,
+    biasfn: str | pathlib.Path,
+    outseq: int,
+    copyfn: str | pathlib.Path | astropy.nddata.CCDData | None = None,
+    verbose: bool = True,
+    objname: str | None = None,
+) -> None:
+    """
+    Make a DeVeny flat-field frame resemble a stellar spectrum.
+
     This function creates an output image that mimics a stellar spectrum
     except the data is from a flatfield.  The purpose of this is for use
     with PypeIt to generate an "object" spectrum of the flatfield.
 
-    :param flatfn: The flatfield image filename to convert
-    :param biasfn: Filename of a bias frame from this night
-    :param outseq: File sequence # to use for this abomination
-    :param copy: Filename of the frame to copy header information from
-                 If None, then use the header from `flat`
-    :param objname: Name of object to insert into frankenfile [Default: None]
-    :param verbose: Print verbose output [Default: True]
-    :return: None
+    Parameters
+    ----------
+    flatfn : path-like or astropy.nddata.CCDData
+        Flat-field image to convert.
+    biasfn : path-like
+        Bias frame from the same night.
+    outseq : int
+        File sequence number for the output image.
+    copyfn : path-like or astropy.nddata.CCDData, optional
+        Frame whose header is copied. The flat frame is used when omitted.
+    verbose : bool, optional
+        Print processing details.
+    objname : str, optional
+        Object name inserted into the output header.
     """
 
     if copyfn is None:
@@ -72,9 +83,9 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True, objname
     # Update the header of the copy CCDData object
     copy.header["obstype"] = "OBJECT"
     copy.header["imagetyp"] = "OBJECT"
-    copy.header[
-        "filename"
-    ] = f"{flat.header['filename'].split('.')[0]}.{outseq:04d}.fits"
+    copy.header["filename"] = (
+        f"{flat.header['filename'].split('.')[0]}.{outseq:04d}.fits"
+    )
     copy.header["objname"] = objname
     copy.header["object"] = objname
     copy.header["scitarg"] = objname
@@ -123,8 +134,13 @@ def make_flat_as_star(flatfn, biasfn, outseq, copyfn=None, verbose=True, objname
     copy.write(f"{copy.header['filename'].split('/')[-1]}", overwrite=True)
 
 
-def load_pypeit_flat(filename, lcen=None, gpmm=None):
-    """load_pypeit_flat Load a PypeIt Flat Calibration into CCDData objects
+def load_pypeit_flat(
+    filename: str | pathlib.Path,
+    lcen: float | None = None,
+    gpmm: float | int | None = None,
+) -> dict[str, typing.Any]:
+    """
+    Load a PypeIt flat calibration into a dictionary.
 
     Data analysis / debugging function
 
@@ -155,15 +171,21 @@ def load_pypeit_flat(filename, lcen=None, gpmm=None):
     return flat_dict
 
 
-def load_pypeit_2dspec():
-    """load_pypeit_2dspec [summary]
+def load_pypeit_2dspec() -> None:
+    """
+    Load a PypeIt two-dimensional spectrum.
 
-    [extended_summary]
+    Notes
+    -----
+    This placeholder currently performs no operation.
     """
 
 
-def load_pypeit_1dspec():
-    """load_pypeit_1dspec [summary]
+def load_pypeit_1dspec() -> None:
+    """
+    Load a PypeIt one-dimensional spectrum.
 
-    [extended_summary]
+    Notes
+    -----
+    This placeholder currently performs no operation.
     """

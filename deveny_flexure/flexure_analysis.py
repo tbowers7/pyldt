@@ -1,16 +1,8 @@
-# -*- coding: utf-8 -*-
-#
-#  This file is part of ______.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
+# SPDX-License-Identifier: MPL-2.0
 #  Created on 08-Jul-2021
-#
 #  @author: tbowers, bshafransky
-
-"""Analysis of the flexure seen in the DeVeny Spectrograph (LDT)
+"""
+Analysis of the flexure seen in the DeVeny Spectrograph (LDT)
 
 This file contains the main driver for the analysis.
 Should be run in an environment containing:
@@ -22,25 +14,32 @@ Should be run in an environment containing:
 
 Run from the command line:
 % python flexure_analysis.py DATA_DIR [rescan]
-
 """
 
-import os
-import ccdproc as ccdp
-from astropy.table import Table
+from __future__ import annotations
+
+# Built-In Libraries
+import collections.abc
+import pathlib
+
+
+# Third-Party Libraries
+import astropy.table
+import ccdproc
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import optimize
+import scipy.optimize
 import warnings
 
-# Get local routines
+# Internal Imports
 from from_dfocus import *
 
 
-def flexure_analysis(data_dir, rescan=False):
-    """flexure_analysis Driving routine for the analysis
+def flexure_analysis(data_dir: str | pathlib.Path, rescan: bool = False) -> None:
+    """
+    Run the legacy flexure analysis for each supported grating.
 
-    [extended_summary]
+    Existing result tables are reused unless ``rescan`` is true.
 
     Parameters
     ----------
@@ -48,15 +47,15 @@ def flexure_analysis(data_dir, rescan=False):
         Directory where the data live
     rescan : `bool`
         Forcably rescan and refit the files
-    """    
+    """
 
-    for grating in ['DV1','DV2','DV5']:
+    for grating in ["DV1", "DV2", "DV5"]:
 
         save_fn = f"flex_data_{grating}.fits"
 
         # Check to see if we saved the AstroPy table to FITS...
-        if not rescan and os.path.isfile(save_fn):
-            table = Table.read(save_fn)
+        if not rescan and pathlib.Path(save_fn).is_file():
+            table = astropy.table.Table.read(save_fn)
 
         else:
             # Create an ImageFileCollection with files matching this grating;
@@ -86,10 +85,13 @@ def flexure_analysis(data_dir, rescan=False):
     return
 
 
-def load_images(data_dir, grating):
-    """load_images Load in the images associated with DATA_DIR and grating
-    
-    [extended_summary]
+def load_images(
+    data_dir: str | pathlib.Path, grating: str
+) -> ccdproc.ImageFileCollection:
+    """
+    Load images associated with a data directory and grating.
+
+    Telescope altitudes are rounded before the collection is filtered.
 
     Parameters
     ----------
@@ -102,26 +104,29 @@ def load_images(data_dir, grating):
     -------
     `ccdproc.image_collection.ImageFileCollection`
         IFC of the files meeting the input criteria
-    """    
+    """
     # Dictionary
-    gratid = {'DV1':'150/5000', 'DV2':'300/4000', 'DV5':'500/5500'}
+    gratid = {"DV1": "150/5000", "DV2": "300/4000", "DV5": "500/5500"}
 
     # Load the images of interest in to an ImageFileCollection()
-    icl = ccdp.ImageFileCollection(data_dir)
+    icl = ccdproc.ImageFileCollection(data_dir)
 
     # Clean up the telescope altitude
     for ccd, fn in icl.ccds(return_fname=True):
-        ccd.header['telalt'] = np.round(ccd.header['telalt'])
-        ccd.write(os.path.join(data_dir,fn), overwrite=True)
+        ccd.header["telalt"] = np.round(ccd.header["telalt"])
+        ccd.write(pathlib.Path(data_dir, fn), overwrite=True)
 
     # Return an ImageFileCollection filtered by the grating desired
     return icl.filter(grating=gratid[grating])
 
 
-def get_line_positions(icl, win=11, thresh=5000.):
-    """get_line_positions Compute the line positions for the images in the icl
+def get_line_positions(
+    icl: ccdproc.ImageFileCollection, win: int = 11, thresh: float = 5000.0
+) -> astropy.table.Table:
+    """
+    Compute line positions for images in a collection.
 
-    [extended_summary]
+    A central spectrum is extracted from every non-bias image.
 
     Parameters
     ----------
@@ -136,60 +141,67 @@ def get_line_positions(icl, win=11, thresh=5000.):
     -------
     `astropy.table.table.Table`
         Table of line positions with associated metadata
-    """    
-    # Put everything into a list of dicionaties
+    """
+    # Put everything into a list of dictionaries
     flex_line_positions = []
 
     # This will only give the x values of the fits file.
     # For each of the images,
     for ccd, fname in icl.ccds(return_fname=True):
         # Need a lower threshold for DV5 than for DV1
-        if ccd.header['grating'] == '500/5500':
-            thresh = 1000.
+        if ccd.header["grating"] == "500/5500":
+            thresh = 1000.0
         # Check for bias frames
-        if ccd.header['exptime'] == 0:
+        if ccd.header["exptime"] == 0:
             continue
         print("")
-        #====================
+        # ====================
         # Code cut-and-paste from dfocus() -- Get line centers above `thresh`
         # Parameters for DeVeny (2015 Deep-Depletion Device):
         n_spec_pix, prepix = (2048, 50)
         # Trim the image (remove top and bottom rows, pre- and post-scan pixels)
-        spec2d = ccd.data[12:512,prepix:prepix+n_spec_pix]
+        spec2d = ccd.data[12:512, prepix : prepix + n_spec_pix]
         ny, nx = spec2d.shape
-        trace = np.full(nx, ny/2, dtype=float).reshape((1,nx)) # Right down the middle
+        trace = np.full(nx, ny / 2, dtype=float).reshape(
+            (1, nx)
+        )  # Right down the middle
         spec1d = extract_spectrum(spec2d, trace, win)
         # Find the lines:
         centers, _ = find_lines(spec1d, thresh=thresh, minsep=17)
         nc = len(centers)
-        cen_list = [f'{cent}' for cent in centers]
+        cen_list = [f"{cent}" for cent in centers]
         print(f"Found {nc} Line Centers: {cen_list}")
-        #====================
+        # ====================
 
         # For ease
         h = ccd.header
         # For saving the table to disk
-        cen_str = ','.join(cen_list)
+        cen_str = ",".join(cen_list)
 
-        flex_line_positions.append({'filename':fname,
-                                    'obserno': h['obserno'],
-                                    'telalt':h['telalt'],
-                                    'telaz':h['telaz'],
-                                    'rotangle':h['rotangle'],
-                                    'utcstart':h['utcstart'],
-                                    'lampcal':h['lampcal'],
-                                    'grating':h['grating'],
-                                    'grangle':h['grangle'],
-                                    'slitasec':h['slitasec'],
-                                    'nlines':nc,
-                                    'xpos':cen_str})
+        flex_line_positions.append(
+            {
+                "filename": fname,
+                "obserno": h["obserno"],
+                "telalt": h["telalt"],
+                "telaz": h["telaz"],
+                "rotangle": h["rotangle"],
+                "utcstart": h["utcstart"],
+                "lampcal": h["lampcal"],
+                "grating": h["grating"],
+                "grangle": h["grangle"],
+                "slitasec": h["slitasec"],
+                "nlines": nc,
+                "xpos": cen_str,
+            }
+        )
 
-    t = Table(flex_line_positions)
+    t = astropy.table.Table(flex_line_positions)
     return t
 
 
-def validate_lines(t):
-    """validate_lines Validate the found lines to produce a uniform set
+def validate_lines(t: astropy.table.Table) -> astropy.table.Table:
+    """
+    Reduce detected lines to a set shared by every image.
 
     The number of lines identified will vary form image to image.  This
     function validates the lines to return the set of lines found in ALL
@@ -204,16 +216,16 @@ def validate_lines(t):
     -------
     `astropy.table.table.Table`
         AstroPy Table identical to input except the lines are validated
-    """    
+    """
     print("Yay, Validation!!!!")
-    nl = t['nlines']
+    nl = t["nlines"]
     # print(f"Mean # of lines found: {np.mean(nl)}  Min: {np.min(nl)}  Max: {np.max(nl)}")
 
     # Create a variable to hold the FINAL LINES for this table
     final_lines = None
     for row in t:
         # Line centers found for this image
-        cens = np.asarray([float(c) for c in row['xpos'].split(',')])
+        cens = np.asarray([float(c) for c in row["xpos"].split(",")])
 
         # If this is the first one, easy...
         if final_lines is None:
@@ -221,9 +233,9 @@ def validate_lines(t):
         else:
             # Remove any canonical lines not in every image
             for line in final_lines:
-                # If nothing is in the same ballpark (say, 12 pixels), 
+                # If nothing is in the same ballpark (say, 12 pixels),
                 #   toss this canonical line
-                if np.min(np.absolute(cens - line)) > 12.: 
+                if np.min(np.absolute(cens - line)) > 12.0:
                     final_lines = final_lines[final_lines != line]
 
     n_final = len(final_lines)
@@ -233,7 +245,7 @@ def validate_lines(t):
     xpos = []
     for i, row in enumerate(t):
         # Line centers found for this image
-        cens = np.asarray([float(c) for c in row['xpos'].split(',')])
+        cens = np.asarray([float(c) for c in row["xpos"].split(",")])
 
         # Keep just the lines that match the canonical lines
         keep_lines = []
@@ -246,15 +258,16 @@ def validate_lines(t):
         # Put the array into a list to wholesale replace `xpos`
         xpos.append(np.asarray(keep_lines).flatten())
 
-    t['nlines'] = [n_final] * len(t)
-    t['xpos'] = xpos
+    t["nlines"] = [n_final] * len(t)
+    t["xpos"] = xpos
     return t
 
 
-def compute_line_deltas(t):
-    """compute_line_deltas Compute line shifts and add to Table
+def compute_line_deltas(t: astropy.table.Table) -> astropy.table.Table:
+    """
+    Compute line shifts and add them to a table.
 
-    [extended_summary]
+    Shifts are measured from the first image and from the mean position.
 
     Parameters
     ----------
@@ -269,28 +282,29 @@ def compute_line_deltas(t):
     """
 
     # Things for relating shifts w.r.t. ROTANGLE = 0
-    fiducial = t['xpos'][0]
+    fiducial = t["xpos"][0]
     delta_to_zero = []
     for row in t:
-        delta_to_zero.append(row['xpos'] - fiducial)
+        delta_to_zero.append(row["xpos"] - fiducial)
 
     # Things for relating shifts w.r.t. MEAN
-    xpos = t['xpos']
+    xpos = t["xpos"]
     del_mean = np.copy(xpos)
     _, nl = xpos.shape
     for line in range(nl):
-        del_mean[:,line] = xpos[:,line] - np.mean(xpos[:,line])
+        del_mean[:, line] = xpos[:, line] - np.mean(xpos[:, line])
 
-    t['del_zero'] = delta_to_zero
-    t['del_mean'] = del_mean
+    t["del_zero"] = delta_to_zero
+    t["del_mean"] = del_mean
 
     return t
 
 
-def make_plots(t, grating):
-    """make_plots Make plots of the data... with subcalls to fitting functions
+def make_plots(t: astropy.table.Table, grating: str) -> None:
+    """
+    Plot flexure measurements and fitted sinusoidal trends.
 
-    [extended_summary]
+    One output plot is written in both EPS and PNG formats.
 
     Parameters
     ----------
@@ -300,31 +314,37 @@ def make_plots(t, grating):
         Grating name, for labeling plots and creating filenames
     """
     # Silence OptimizeWarning
-    warnings.simplefilter('ignore', optimize.OptimizeWarning)
+    warnings.simplefilter("ignore", scipy.optimize.OptimizeWarning)
 
     # Set up the plotting environment
     _, ax = plt.subplots()
     tsz = 8
 
-    x,y,k = construct_plotting_pairs(t, 'rotangle', 'del_zero', 'telalt')
+    x, y, k = construct_plotting_pairs(t, "rotangle", "del_zero", "telalt")
     for i in range(len(x)):
         xp, yp = (x[i], y[i])
-        ax.plot(xp,yp,f"C{i if i < 10 else i-10}.")
-        xp = np.swapaxes(np.tile(xp,[len(yp[0]),1]),0,1)
+        ax.plot(xp, yp, f"C{i if i < 10 else i-10}.")
+        xp = np.swapaxes(np.tile(xp, [len(yp[0]), 1]), 0, 1)
         # print(f"Shapes: {xp.shape} {yp.shape}")
 
-        par, _ = optimize.curve_fit(sinusoid, xp.flatten(), yp.flatten(), p0=[1, 1, 0, 0])
-        xpl = np.arange(101) * (np.max(xp) - np.min(xp)) /100. + np.min(xp)
+        par, _ = scipy.optimize.curve_fit(
+            sinusoid, xp.flatten(), yp.flatten(), p0=[1, 1, 0, 0]
+        )
+        xpl = np.arange(101) * (np.max(xp) - np.min(xp)) / 100.0 + np.min(xp)
         ypl = sinusoid(xpl, par[0], par[1], par[2], par[3])
-        label = f"El = {k[i]:.0f}"+r'$^\circ$'#+f", A={par[0]:.1f} B={par[1]:.2f} C={par[2]:.1f} D={par[3]:.1f}"
+        label = (
+            f"El = {k[i]:.0f}" + r"$^\circ$"
+        )  # +f", A={par[0]:.1f} B={par[1]:.2f} C={par[2]:.1f} D={par[3]:.1f}"
         ax.plot(xpl, ypl, f"C{i if i < 10 else i-10}-", label=label)
 
-    ax.set_xlabel('Cassegrain Rotator Angle [deg]', fontsize=tsz)
-    ax.set_ylabel(r'Line Center Deviation from CASS=$0^\circ$ Position [pixels]', fontsize=tsz)
+    ax.set_xlabel("Cassegrain Rotator Angle [deg]", fontsize=tsz)
+    ax.set_ylabel(
+        r"Line Center Deviation from CASS=$0^\circ$ Position [pixels]", fontsize=tsz
+    )
 
     # Final adjustments and save figure
-    ax.legend(loc='upper left', fontsize=tsz)
-    ax.tick_params('both', labelsize=tsz, direction='in', top=True, right=True)
+    ax.legend(loc="upper left", fontsize=tsz)
+    ax.tick_params("both", labelsize=tsz, direction="in", top=True, right=True)
     plt.tight_layout()
     plt.savefig(f"flexure_analysis_{grating}.eps")
     plt.savefig(f"flexure_analysis_{grating}.png")
@@ -332,10 +352,14 @@ def make_plots(t, grating):
     return
 
 
-def sinusoid(x, a, b, c, d):
-    """sinusoid Sine Function
+def sinusoid(
+    x: np.ndarray | float, a: float, b: float, c: float, d: float
+) -> np.ndarray | float:
+    """
+    Evaluate the sinusoidal flexure model.
 
-    [extended_summary]
+    The angular frequency is fixed at one cycle per 360 degrees; the input
+    value of ``b`` is retained for compatibility with fitting code.
 
     Parameters
     ----------
@@ -357,11 +381,14 @@ def sinusoid(x, a, b, c, d):
     """
     # Fix angular frequency at 1
     b = 1.0
-    return a * np.sin(b * x*np.pi/180. + c*np.pi/180.) + d
+    return a * np.sin(b * x * np.pi / 180.0 + c * np.pi / 180.0) + d
 
 
-def construct_plotting_pairs(t, abs, ord, sort):
-    """construct_plotting_pairs Construct plotting pairs from table
+def construct_plotting_pairs(
+    t: astropy.table.Table, abs: str, ord: str, sort: str
+) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray]:
+    """
+    Construct grouped plotting pairs from a table.
 
     Extract the requested things from the table to construct plotting pairs
     that can be directly input into ax.plot(), sorted by some other key
@@ -376,6 +403,11 @@ def construct_plotting_pairs(t, abs, ord, sort):
         FITS keyword for the data to appear on the ordinate
     sort : `str`
         FITS keyword for the data to sort by
+
+    Returns
+    -------
+    tuple of list, list, and numpy.ndarray
+        Abscissa arrays, ordinate arrays, and their grouping keys.
     """
     # Clean the input keywords --> lower()
     abs = abs.lower()
@@ -389,7 +421,7 @@ def construct_plotting_pairs(t, abs, ord, sort):
     # Index the table based on the `sort` parameter
     t_by_sort = t.group_by(sort)
     for key in t_by_sort.groups.keys[sort]:
-        mask = (t_by_sort.groups.keys[sort] == key)
+        mask = t_by_sort.groups.keys[sort] == key
         sub_t = t_by_sort.groups[mask]
         print(f"Key: {key}")
         sub_t.pprint()
@@ -399,27 +431,26 @@ def construct_plotting_pairs(t, abs, ord, sort):
     return x, y, t_by_sort.groups.keys[sort]
 
 
-
-
-#==============================================================================
-def main(args):
-    """Main driving routine
-
-    Call should be of form:
-    % python flexure_analysis.py DATA_DIR [rescan]
+# ==============================================================================
+def main(args: collections.abc.Sequence[str]) -> None:
     """
-    from os import path
+    Run the command-line interface.
 
+    Parameters
+    ----------
+    args : sequence of str
+        Command-line arguments of the form ``SCRIPT DATA_DIR [rescan]``.
+    """
     # Exit if command-line arguments aren't valid
     if len(args) == 1:
         print(f"ERROR: scrpit {args[0]} requires the DATA_DIR to analyze.")
         return
-    if not path.isdir(args[1]):
+    if not pathlib.Path(args[1]).is_dir():
         print(f"ERROR: DATA_DIR must be a directory containing the data to analyze.")
         return
 
     # Check for RESCAN argument
-    if len(args) > 2 and args[2] == 'rescan':
+    if len(args) > 2 and args[2] == "rescan":
         rescan = True
     else:
         rescan = False
@@ -436,6 +467,7 @@ def main(args):
     return
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     main(sys.argv)

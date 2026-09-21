@@ -1,0 +1,23 @@
+name: pyldt
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.13
+  - astropy
+  - astroquery
+  - black
+  - ccdproc
+  - matplotlib
+  - numpy>=2.3
+  - pip
+  - pylint
+  - pytest
+  - requests
+  - scipy
+  - setuptools>=77
+  - setuptools-scm>=8
+  - sphinx
+  - sphinx-automodapi
+  - sphinx_rtd_theme
+  - tqdm

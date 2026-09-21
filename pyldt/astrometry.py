@@ -1,16 +1,8 @@
-# -*- coding: utf-8 -*-
-#
-#  This file is part of PyLDT.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
+# SPDX-License-Identifier: MPL-2.0
 #  Created on 26-Oct-2020
-#
 #  @author: tbowers
-
-"""PyLDT contains image calibration routines for LDT facility instruments
+"""
+PyLDT contains image calibration routines for LDT facility instruments
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
@@ -19,7 +11,10 @@ This module provides a wrapper for solving the plate scale of LMI images using
 Astrometry.Net
 """
 
+from __future__ import annotations
+
 # Built-In Libraries
+import pathlib
 import time
 
 # 3rd Party Libraries
@@ -36,25 +31,25 @@ import requests.exceptions
 # Internal Imports
 from pyldt import reduction
 
-
 # Define API
 __all__ = ["solve_field", "validate_solution"]
 
 
 def solve_field(
-    img_fn,
+    img_fn: str | pathlib.Path,
     *,
-    detect_threshold=10,
-    fwhm=3,
-    plate_scale=None,
-    plate_error=10,
-    force_image_upload=False,
-    validate=True,
-    add_scale=False,
-    add_center_coords=False,
-    debug=False,
-):
-    """Get a plate solution from Astrometry.Net
+    detect_threshold: float = 10,
+    fwhm: float = 3,
+    plate_scale: u.Quantity | float | None = None,
+    plate_error: float = 10,
+    force_image_upload: bool = False,
+    validate: bool = True,
+    add_scale: bool = False,
+    add_center_coords: bool = False,
+    debug: bool = False,
+) -> tuple[astropy.wcs.WCS, bool]:
+    """
+    Get a plate solution from Astrometry.Net
 
     Plate solutions not only provide accurate astrometry of objects in an
     image, they can also help to identify distortions or rotations in the
@@ -67,8 +62,8 @@ def solve_field(
     ----------
     img_fn : :obj:`str` or :obj:`pathlib.Path`
         Filename of the image on which to do a plate solution
-    detect_threshold: float, optional
-        Detection limit, as # of sigma above background
+    detect_threshold : float, optional
+        Detection limit as a number of standard deviations above background.
     fwhm : float, optional
         FWHM of detected objects, in pixels
     plate_scale : :obj:`astropy.units.Quantity` or :obj:`float`, optional
@@ -142,9 +137,9 @@ def solve_field(
                     submission_id=submission_id,
                     detect_threshold=detect_threshold,
                     scale_units=scale_units,
-                    scale_est=plate_scale.value,
-                    scale_lower=scale_lower.value,
-                    scale_upper=scale_upper.value,
+                    scale_est=getattr(plate_scale, "value", None),
+                    scale_lower=getattr(scale_lower, "value", None),
+                    scale_upper=getattr(scale_upper, "value", None),
                     publicly_visible="n",
                     allow_commercial_use="n",
                     fwhm=fwhm,
@@ -242,7 +237,8 @@ def validate_solution(
     atol: float = 3e-07,
     debug: bool = False,
 ) -> tuple[astropy.wcs.WCS, bool]:
-    """Validate the Astrometry.Net plate solution
+    """
+    Validate the Astrometry.Net plate solution
 
     If the Astrometry.Net solution is way off, keep the original WCS.
     Otherwise, use the new solution.

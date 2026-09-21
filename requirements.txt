@@ -1,8 +1,0 @@
-numpy
-matplotlib
-astropy
-ccdproc
-setuptools
-statsmodels
-patsy
-scipy

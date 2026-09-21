@@ -1,16 +1,8 @@
-# -*- coding: utf-8 -*-
-#
-#  This file is part of PyLDT.
-#
-#   This Source Code Form is subject to the terms of the Mozilla Public
-#   License, v. 2.0. If a copy of the MPL was not distributed with this
-#   file, You can obtain one at http://mozilla.org/MPL/2.0/.
-#
+# SPDX-License-Identifier: MPL-2.0
 #  Created on 26-Oct-2020
-#
 #  @author: tbowers
-
-"""PyLDT contains tools for data from Lowell Observatory facility instruments
+"""
+PyLDT contains tools for data from Lowell Observatory facility instruments
 
 Lowell Discovery Telescope (Lowell Observatory: Flagstaff, AZ)
 http://www.lowell.edu
@@ -31,15 +23,19 @@ class methods to produce calibrated data for use with the data analysis
 software of your choosing.
 """
 
+from __future__ import annotations
+
 # Built-In Libraries
 import datetime
 import pathlib
 import shutil
 import sys
+import typing
 import warnings
 
 # 3rd Party Libraries
 import astropy.convolution
+import astropy.io.fits
 import astropy.modeling
 import astropy.nddata
 import astropy.stats
@@ -66,7 +62,8 @@ PKG_NAME = f"PyLDT {'='*55}"  # For header metadata printing
 
 
 class ImageDirectory:
-    """Internal class, parent of all imager classes
+    """
+    Internal class, parent of all imager classes
 
     This base class contains collective metadata for a single night's data
     images.  Child classes modify or extend this class for specific differences
@@ -86,11 +83,25 @@ class ImageDirectory:
 
     def __init__(
         self,
-        path,
+        path: str | pathlib.Path,
         mem_limit: float = 8.192e9,
         debug: bool = True,
         show_warnings: bool = False,
-    ):
+    ) -> None:
+        """
+        Initialize a directory of images.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Directory containing images to reduce.
+        mem_limit : float, optional
+            Memory limit in bytes for image combination.
+        debug : bool, optional
+            Print processing diagnostics.
+        show_warnings : bool, optional
+            Show Astropy and user warnings instead of suppressing them.
+        """
         # Settings that determine how the class functions
         self.debug = debug
         # Unless specified, suppress AstroPy warnings
@@ -114,8 +125,9 @@ class ImageDirectory:
         # Create Placeholder for initial ImageFileCollection for the directory
         self.icl = None
 
-    def inspect_images(self):
-        """Inspect the images in the specified directory
+    def inspect_images(self) -> None:
+        """
+        Inspect the images in the specified directory
 
         Inspects the images in the specified directory, and loads in the
         default BIASSEC and TRIMSEC values (if not specified at Class
@@ -192,11 +204,17 @@ class ImageDirectory:
         # Close the progress bar, end of loop
         prog_bar.close()
 
-    def copy_raw(self, overwrite=False):
-        """Copy raw FITS files to subdirectory 'raw' for safekeeping.
+    def copy_raw(self, overwrite: bool = False) -> None:
+        """
+        Copy raw FITS files to a ``raw`` backup directory.
+
         If a directory containing the raw data is not extant, create it and copy
         all FITS files there as a backup.
-        :return: None
+
+        Parameters
+        ----------
+        overwrite : bool, optional
+            Replace backup files that already exist.
         """
 
         raw_data = pathlib.Path(self.path, "raw")
@@ -213,10 +231,12 @@ class ImageDirectory:
         keep_orig: bool = False,
         keep_trimmed: bool = False,
         gain_correct: bool = True,
-    ):
-        """Finds and combines bias frames with the indicated binning
+    ) -> None:
+        """
+        Find and combine bias frames with the selected binning.
 
-        _extended_summary_
+        Each input bias is overscan-subtracted and trimmed before the frames
+        are averaged with sigma clipping.
 
         Parameters
         ----------
@@ -316,10 +336,12 @@ class ImageDirectory:
             for fname in t_bias_cl.files:
                 self.path.joinpath(fname).unlink()
 
-    def bias_subtract(self, keep_orig: bool = False, gain_correct: bool = True):
-        """Subtract the combined bias from the images
+    def bias_subtract(self, keep_orig: bool = False, gain_correct: bool = True) -> None:
+        """
+        Subtract the combined bias from the images.
 
-        _extended_summary_
+        Images are overscan-subtracted, trimmed, and optionally gain-corrected
+        before the combined bias is removed.
 
         Parameters
         ----------
@@ -384,8 +406,9 @@ class ImageDirectory:
         keep_subtracted: bool = False,
         keep_normalized: bool = False,
         norm_use_center_only: bool = True,
-    ):
-        """Combine flat field frames
+    ) -> None:
+        """
+        Combine flat field frames
 
         Combine the flat frames for each filter in the directory with a given
         binning.  Basic emulation of IRAF's flatcombine.  Produces a combined bias
@@ -516,8 +539,9 @@ class ImageDirectory:
         else:
             print("No flats to be combined.")
 
-    def divide_by_flat(self, keep_subtracted: bool = False):
-        """Divide frames by the appropriate flatfield
+    def divide_by_flat(self, keep_subtracted: bool = False) -> None:
+        """
+        Divide frames by the appropriate flatfield
 
         Divides all LMI science frames by the appropriate flat field image
         This method is LMI-specific, rather than being wrapper for a more
@@ -527,7 +551,6 @@ class ImageDirectory:
         ----------
         keep_subtracted : :obj:`bool`, optional
             Keep the bias-subtracted (`i.e.`, input) image?  (Default: False)
-
         """
         # Load the list of combined flats and bias-subtracted data frames
         flat_cl = ccdproc.ImageFileCollection(
@@ -597,8 +620,9 @@ class ImageDirectory:
         input_icl: ccdproc.ImageFileCollection,
         output_bias: astropy.nddata.CCDData,
         typesize: float = 8,
-    ):
-        """Produce QA plots for the bias combination
+    ) -> None:
+        """
+        Produce QA plots for the bias combination
 
         This should make pixel histograms for each of the input bias frames and
         for the combined frame.
@@ -692,8 +716,9 @@ class ImageDirectory:
         output_flat: astropy.nddata.CCDData,
         filtername: str,
         typesize: float = 8,
-    ):
-        """Produce QA plots for the flat combination
+    ) -> None:
+        """
+        Produce QA plots for the flat combination
 
         This should make pixel histograms for each of the input flat frames and
         for the combined frame.
@@ -790,8 +815,11 @@ class ImageDirectory:
         plt.close()
 
     @staticmethod
-    def get_qa_histbins(ccd: astropy.nddata.CCDData) -> np.ndarray:
-        """Generate sensible histogram bins for QA plots
+    def get_qa_histbins(
+        ccd: astropy.nddata.CCDData,
+    ) -> tuple[np.ndarray, str]:
+        """
+        Generate sensible histogram bins for QA plots
 
         There should be something like 100 bins (give or take) across the
         displayed histogram.  The bin sizes should be some simple, human-
@@ -806,8 +834,8 @@ class ImageDirectory:
 
         Returns
         -------
-        :obj:`~numpy.ndarray`
-            The array of histogram bin edges to use
+        tuple of numpy.ndarray and str
+            Histogram bin edges and a display-friendly bin-size string.
         """
         # First, get the (sigma-clipped) median and std of the data
         _, median, std = astropy.stats.sigma_clipped_stats(ccd.data, sigma=5.0)
@@ -837,13 +865,16 @@ class ImageDirectory:
         return np.arange(plotmin, plotmax, binsize), binsz_str
 
     @staticmethod
-    def add_package_versions(hdr):
-        """Add or update the depedendent package versions
+    def add_package_versions(
+        hdr: astropy.io.fits.Header,
+    ) -> astropy.io.fits.Header:
+        """
+        Add or update dependent package versions.
 
         Include the version information for dependent packages in the FITS
         headers for the purposes for debugging if something changes in the
         underlying infrastructure.  By comparing package version numbers,
-        it may be possible to pinpoint when a change in a dependancy causes
+        it may be possible to pinpoint when a change in a dependency causes
         problems in this package's output.
 
         Parameters
@@ -870,7 +901,8 @@ class ImageDirectory:
 
     @staticmethod
     def clean_nans(ccd: astropy.nddata.CCDData) -> astropy.nddata.CCDData:
-        """Clean the NaN's from a CCDData object by interpolation
+        """
+        Clean the NaN's from a CCDData object by interpolation
 
         This method performs a cleaning of NaN values in a ``CCDData`` object.
         The issue is not simply removing NaN's in the data attribute, but also
@@ -916,9 +948,11 @@ class ImageDirectory:
 
 
 class LMI(ImageDirectory):
-    """Class call for a folder of LMI data to be calibrated.
+    """
+    Manage calibration of a directory containing LMI data.
 
-    _extended_summary_
+    Instrument-specific defaults are combined with the common reduction
+    workflow implemented by :class:`ImageDirectory`.
 
     Parameters
     ----------
@@ -932,20 +966,40 @@ class LMI(ImageDirectory):
         If unspecified, use the values suggested in the LMI User Manual.
     bin_factor : :obj:`int`, optional
         The binning factor used to create the image(s) to be processed.
-        (Ddefault: 2)
+        (Default: 2)
     mem_limit : :obj:`float`, optional
         Memory limit for the image combination routine  (Default: 8.192e9 bytes)
+    **kwargs : Any
+        Additional options passed to :class:`ImageDirectory`.
     """
 
     def __init__(
         self,
-        path,
-        biassec: str = None,
-        trimsec: str = None,
+        path: str | pathlib.Path,
+        biassec: str | None = None,
+        trimsec: str | None = None,
         bin_factor: int = 2,
         mem_limit: float = 8.192e9,
-        **kwargs,
-    ):
+        **kwargs: typing.Any,
+    ) -> None:
+        """
+        Initialize an LMI image directory.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Directory containing LMI images.
+        biassec : str, optional
+            IRAF-style overscan section.
+        trimsec : str, optional
+            IRAF-style retained image section.
+        bin_factor : int, optional
+            Detector binning factor.
+        mem_limit : float, optional
+            Memory limit in bytes for image combination.
+        **kwargs : Any
+            Additional options passed to :class:`ImageDirectory`.
+        """
         # SUPER-INIT!!!
         super().__init__(path, mem_limit=mem_limit, **kwargs)
 
@@ -964,8 +1018,10 @@ class LMI(ImageDirectory):
             self.path, glob_include=f"{self.prefix}.*.fits"
         )
 
-    def process_all(self):
-        """Process all of the images in this directory (with given binning)
+    def process_all(self) -> None:
+        """
+        Run every calibration step for the directory.
+
         The result of running this method will be to process all of the images
         in the specified directory (and given binning) through all of the basic
         calibration steps.  The procedure is:
@@ -975,7 +1031,6 @@ class LMI(ImageDirectory):
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
             * divide_flat() -- Divide all science frames by the appropriate flat
-        :return: None
         """
         self.copy_raw()
         self.inspect_images()
@@ -986,9 +1041,11 @@ class LMI(ImageDirectory):
 
 
 class NASA42(ImageDirectory):
-    """Class call for a folder of NASA42 data to be calibrated.
+    """
+    Manage calibration of a directory containing NASA42 data.
 
-    _extended_summary_
+    Instrument-specific naming rules are combined with the common reduction
+    workflow implemented by :class:`ImageDirectory`.
 
     Parameters
     ----------
@@ -1002,24 +1059,46 @@ class NASA42(ImageDirectory):
         If unspecified, use the values suggested in the LMI User Manual.
     bin_factor : :obj:`int`, optional
         The binning factor used to create the image(s) to be processed.
-        (Ddefault: 2)
+        (Default: 2)
     mem_limit : :obj:`float`, optional
         Memory limit for the image combination routine  (Default: 8.192e9 bytes)
     prefix : :obj:`str`, optional
         The file prefix to use.  If ``None``, the prefix will be pulled from the
         first file in the directory.  (Default: None)
+    **kwargs : Any
+        Additional options passed to :class:`ImageDirectory`.
     """
 
     def __init__(
         self,
-        path,
-        biassec: str = None,
-        trimsec: str = None,
+        path: str | pathlib.Path,
+        biassec: str | None = None,
+        trimsec: str | None = None,
         bin_factor: int = 2,
         mem_limit: float = 8.192e9,
-        prefix: str = None,
-        **kwargs,
-    ):
+        prefix: str | None = None,
+        **kwargs: typing.AbstractSetAny,
+    ) -> None:
+        """
+        Initialize a NASA42 image directory.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Directory containing NASA42 images.
+        biassec : str, optional
+            IRAF-style overscan section.
+        trimsec : str, optional
+            IRAF-style retained image section.
+        bin_factor : int, optional
+            Detector binning factor.
+        mem_limit : float, optional
+            Memory limit in bytes for image combination.
+        prefix : str, optional
+            Input filename prefix; inferred when omitted.
+        **kwargs : Any
+            Additional options passed to :class:`ImageDirectory`.
+        """
         # SUPER-INIT!!!
         super().__init__(path, mem_limit=mem_limit, **kwargs)
 
@@ -1048,8 +1127,10 @@ class NASA42(ImageDirectory):
             self.path, glob_include=f"{self.prefix}.*.fits"
         )
 
-    def process_all(self):
-        """Process all of the images in this directory (with given binning)
+    def process_all(self) -> None:
+        """
+        Run every calibration step for the directory.
+
         The result of running this method will be to process all of the images
         in the specified directory (and given binning) through all of the basic
         calibration steps.  The procedure is:
@@ -1059,7 +1140,6 @@ class NASA42(ImageDirectory):
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
             * divide_flat() -- Divide all science frames by the appropriate flat
-        :return: None
         """
         self.copy_raw()
         self.inspect_images()
@@ -1071,34 +1151,53 @@ class NASA42(ImageDirectory):
 
 # Error Classes
 class PyldtError(Exception):
-    """Base class for exceptions in this module."""
+    """
+    Base class for exceptions in this module.
+    """
 
 
 class InputError(PyldtError):
-    """Exception raised for errors in the input.
+    """
+    Exception raised for errors in the input.
 
-    Attributes:
-        message -- explanation of the error
+    Parameters
+    ----------
+    message : str
+        Explanation of the invalid input.
+
+    Attributes
+    ----------
+    message : str
+        Explanation of the invalid input.
     """
 
-    def __init__(self, message):
-        super().__init__()
+    def __init__(self, message: str) -> None:
+        """
+        Initialize the exception.
+
+        Parameters
+        ----------
+        message : str
+            Explanation of the invalid input.
+        """
+        super().__init__(message)
         self.message = message
 
 
 # Non-class function definitions =============================================#
 def imcombine(
-    *infiles: list,
-    inlist: str = None,
-    outfn: str = None,
-    del_input: str = False,
-    combine: str = None,
+    *infiles: list[str | pathlib.Path],
+    inlist: str | pathlib.Path | None = None,
+    outfn: str | pathlib.Path | None = None,
+    del_input: bool = False,
+    combine: str | None = None,
     printstat: bool = True,
     overwrite: bool = True,
     returnccd: bool = False,
     mem_limit: float = 8.192e9,
-):
-    """Combine a collection of images
+) -> astropy.nddata.CCDData | None:
+    """
+    Combine a collection of images
 
     This function (crudely) emulates the IRAF imcombine function.  Pass in a
     list of images to be combined, and the result is written to disk with an
@@ -1106,8 +1205,8 @@ def imcombine(
 
     Parameters
     ----------
-    infiles : :obj:`list`, optional
-        List of filenames to combine
+    *infiles : list, optional
+        Lists of filenames to combine.
     inlist : :obj:`str`, optional
         Filename of text file listing images to be combined  (Default: None)
     outfn : :obj:`str`, optional
@@ -1149,7 +1248,7 @@ def imcombine(
 
     # Read in the text list inlist, if specified
     if inlist is not None:
-        with open(inlist, "r", encoding="utf-8") as f_obj:
+        with pathlib.Path(inlist).open("r", encoding="utf-8") as f_obj:
             files = []
             for line in f_obj:
                 files.append(pathlib.Path(line.rstrip()))
@@ -1226,8 +1325,9 @@ def imcombine(
     return None
 
 
-def parse_lois_ampids(hdr):
-    """Parse the LOIS amplifier IDs
+def parse_lois_ampids(hdr: astropy.io.fits.Header) -> str:
+    """
+    Parse the LOIS amplifier IDs
 
     LOIS is particular about how it records which amplifiers are used to read
     out the CCD.  Most of the time, users will use a single amplifier, whose ID
@@ -1254,7 +1354,8 @@ def parse_lois_ampids(hdr):
 
 
 def savetime(local: bool = False) -> str:
-    """Make a human-readable timestamp
+    """
+    Make a human-readable timestamp
 
     This is a cheap shortcut to return the current time as a timestamp in
     either UT or local times.  The timestamp has the form::
@@ -1278,7 +1379,8 @@ def savetime(local: bool = False) -> str:
 def trim_oscan(
     ccd: astropy.nddata.CCDData, biassec: str, trimsec: str, oscan_order: int = 1
 ) -> astropy.nddata.CCDData:
-    """Subtract the overscan region and trim image to desired size
+    """
+    Subtract the overscan region and trim image to desired size
 
     The CCDPROC function :func:`~ccdproc.subtract_overscan` expects the
     ``TRIMSEC`` of the image (the part you want to keep) to span the entirety
@@ -1332,19 +1434,16 @@ def trim_oscan(
     return ccdproc.trim_image(ccd[:, x_t.start : x_t.stop])
 
 
-def wrap_trim_oscan(ccd, gain_correct=True):
-    """Wrap the :func:`trim_oscan` function to handle multiple amplifiers
+def wrap_trim_oscan(
+    ccd: astropy.nddata.CCDData, gain_correct: bool = True
+) -> astropy.nddata.CCDData:
+    """
+    Wrap the :func:`trim_oscan` function to handle multiple amplifiers
 
     This function will perform the magic of stitching together multi-amplifier
     reads.  There may be instrument-specific issues related to this, but it is
-    likely that only LMI will ever bet read out in multi-amplifier mode.
-
-    ..todo ::
-
-        Whether here or somewhere else, should convert things to electrons
-        via the ``GAIN``.  Might not be necessary within the context of Roz,
-        but will be necessary for science frame analysis with multiple
-        amplifier reads.
+    likely that only LMI will ever be read out in multi-amplifier mode. When
+    requested, each amplifier is gain-corrected before the pieces are joined.
 
     Parameters
     ----------

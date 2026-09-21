@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[build-system]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyldt"
+dynamic = ["version"]
+description = "Data reduction scripts and Python utilities for Lowell Discovery Telescope instruments"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Timothy P. Ellsworth Bowers", email = "tbowers@lowell.edu" },
+]
+keywords = ["astronomy", "data reduction", "Lowell Discovery Telescope"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Natural Language :: English",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "astropy",
+  "astroquery",
+  "ccdproc",
+  "matplotlib",
+  "numpy>=2.3",
+  "requests",
+  "scipy",
+  "tqdm",
+  "obstools @ git+https://github.com/LowellObservatory/LDTObserverTools",
+]
+
+[project.optional-dependencies]
+docs = [
+  "sphinx",
+  "sphinx-automodapi",
+  "sphinx-rtd-theme",
+]
+dev = [
+  "black",
+  "pylint",
+  "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/tbowers7/pyldt"
+Repository = "https://github.com/tbowers7/pyldt"
+
+[tool.black]
+target-version = ["py313"]
+
+[tool.setuptools.packages.find]
+include = ["pyldt*"]
+
+[tool.setuptools_scm]
+write_to = "pyldt/version.py"
+fallback_version = "0.0.0"
