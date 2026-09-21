@@ -410,9 +410,10 @@ class ImageDirectory:
         """
         Combine flat field frames
 
-        Combine the flat frames for each filter in the directory with a given
-        binning.  Basic emulation of IRAF's flatcombine.  Produces a combined bias
-        image saved with the appropriate filename for each filter found.
+        Combine the flat frames for each flat type and filter in the directory
+        with a given binning.  Basic emulation of IRAF's flatcombine.  Produces
+        a combined flat image saved with the appropriate filename for each
+        flat type and filter found.
 
         Parameters
         ----------
@@ -444,7 +445,6 @@ class ImageDirectory:
             ccdsum=self.binning, imagetyp=r"[a-z]+\s*flat", regex_match=True
         )
         print(f"Flat types found: {sorted(set(flat_cl.summary['imagetyp']))}")
-        # TODO: Do something here to separate SKY and DOME flats...
 
         # Set up a progress bar, so we can see how the process is going...
         prog_bar = tqdm(
@@ -491,50 +491,64 @@ class ImageDirectory:
             self.path, glob_include=f"{self.prefix}.*n.fits"
         )
         if norm_cl.files:
-            # Create a unique list of the filter collection found in this set
-            filters = list(norm_cl.summary["filters"])
-            unique_filters = sorted(list(set(filters)))
+            # Combine flat field frames separately for each flat type and filter.
+            # In particular, do not mix (for example) sky and dome flats taken
+            # through the same filter.
+            flat_types = sorted(set(norm_cl.summary["imagetyp"]))
+            for flat_type in flat_types:
+                type_cl = norm_cl.filter(imagetyp=flat_type)
+                unique_filters = sorted(set(type_cl.summary["filters"]))
+                flat_type_tag = flat_type.replace(" ", "")
 
-            # Combine flat field frames for each filt in unique_filters
-            for filt in unique_filters:
-                flats = norm_cl.files_filtered(filters=filt, include_path=True)
+                for filt in unique_filters:
+                    flats = type_cl.files_filtered(filters=filt, include_path=True)
 
-                print(f"Combining {len(flats)} flats for filter {filt}...")
-                # Perform the NaN-cleaned combination
-                cflat = self.clean_nans(
-                    ccdproc.combine(
-                        flats,
-                        method="average",
-                        sigma_clip=True,
-                        sigma_clip_dev_func=astropy.stats.mad_std,
-                        mem_limit=self.mem_limit,
+                    print(
+                        f"Combining {len(flats)} {flat_type} frames "
+                        f"for filter {filt}..."
                     )
-                )
+                    # Perform the NaN-cleaned combination
+                    cflat = self.clean_nans(
+                        ccdproc.combine(
+                            flats,
+                            method="average",
+                            sigma_clip=True,
+                            sigma_clip_dev_func=astropy.stats.mad_std,
+                            mem_limit=self.mem_limit,
+                        )
+                    )
 
-                # Make the QA plot(s)
-                self.QA_flat(ccdproc.ImageFileCollection(filenames=flats), cflat, filt)
+                    # Make the QA plot(s)
+                    self.QA_flat(
+                        ccdproc.ImageFileCollection(filenames=flats),
+                        cflat,
+                        filt,
+                        flat_type=flat_type,
+                    )
 
-                # Add FITS keyword NCOMBINE and HISTORY
-                cflat.header.set(
-                    "ncombine", len(flats), "# of input images in combination"
-                )
-                cflat.header["HISTORY"] = PKG_NAME
-                cflat.header["HISTORY"] = "Combined flat created: " + savetime()
-                cflat.header["HISTORY"] = "Median combined " + f"{len(flats)} files:"
-                for fname in flats:
-                    # Remove the path portion of the filename for the HISTORY
-                    cflat.header["HISTORY"] = fname[fname.rfind("/") + 1 :]
-
-                # Build filename, save, remove input files
-                flat_fn = f"flat_bin{self.bin_factor}_{filt}.fits"
-                if self.debug:
-                    print(f"Saving combined flat as {flat_fn}")
-                cflat.header = self.add_package_versions(cflat.header)
-                cflat.write(self.path / flat_fn, overwrite=True)
-                if not keep_normalized:
+                    # Add FITS keyword NCOMBINE and HISTORY
+                    cflat.header.set(
+                        "ncombine", len(flats), "# of input images in combination"
+                    )
+                    cflat.header["HISTORY"] = PKG_NAME
+                    cflat.header["HISTORY"] = "Combined flat created: " + savetime()
+                    cflat.header["HISTORY"] = (
+                        "Median combined " + f"{len(flats)} files:"
+                    )
                     for fname in flats:
-                        # Path name is already included
-                        pathlib.Path(fname).unlink()
+                        # Remove the path portion of the filename for the HISTORY
+                        cflat.header["HISTORY"] = pathlib.Path(fname).name
+
+                    # Build filename, save, remove input files
+                    flat_fn = f"flat_bin{self.bin_factor}_{flat_type_tag}_{filt}.fits"
+                    if self.debug:
+                        print(f"Saving combined flat as {flat_fn}")
+                    cflat.header = self.add_package_versions(cflat.header)
+                    cflat.write(self.path / flat_fn, overwrite=True)
+                    if not keep_normalized:
+                        for fname in flats:
+                            # Path name is already included
+                            pathlib.Path(fname).unlink()
 
         else:
             print("No flats to be combined.")
@@ -716,6 +730,7 @@ class ImageDirectory:
         output_flat: astropy.nddata.CCDData,
         filtername: str,
         typesize: float = 8,
+        flat_type: str | None = None,
     ) -> None:
         """
         Produce QA plots for the flat combination
@@ -733,11 +748,16 @@ class ImageDirectory:
             The name of the filter for this set of flats
         typesize : :obj:`float`
             Typesize for the output plots  (Default: 8)
+        flat_type : :obj:`str`, optional
+            The image type for this set of flats, such as ``"sky flat"`` or
+            ``"dome flat"``. Used to distinguish QA products for a filter.
         """
         # Create the QA directory, if needed
         qa_dir = (self.path / "QA").resolve()
         qa_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Writing the Flat QA plots to  {(qa_dir / f'Flat_{filtername}_QA.png')}")
+        flat_label = "" if flat_type is None else f"{flat_type.replace(' ', '')}_"
+        qa_stem = f"Flat_{flat_label}{filtername}_QA"
+        print(f"Writing the Flat QA plots to  {(qa_dir / f'{qa_stem}.png')}")
 
         # Construct the plotting environment
         _, axis = plt.subplots()
@@ -811,7 +831,7 @@ class ImageDirectory:
         utils.set_std_tickparams(axis, typesize)
         plt.tight_layout()
         for suffix in ["pdf", "png"]:
-            plt.savefig(qa_dir / f"Flat_{filtername}_QA.{suffix}")
+            plt.savefig(qa_dir / f"{qa_stem}.{suffix}")
         plt.close()
 
     @staticmethod
