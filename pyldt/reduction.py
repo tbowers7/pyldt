@@ -1271,10 +1271,8 @@ def savetime(local: bool = False) -> str:
     :obj:`str`
         The string timestamp
     """
-    if local:
-        local_now = datetime.datetime.now()
-        return f'{local_now.strftime("%Y-%m-%d %H:%M:%S")} {local_now.tzname()}'
-    return f'{datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UT'
+    now = datetime.datetime.now(None if local else datetime.UTC)
+    return f"{now.isoformat(sep=' ',timespec='seconds')} {now.tzname()}"
 
 
 def trim_oscan(
