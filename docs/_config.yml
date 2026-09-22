@@ -1,0 +1,7 @@
+title: PyLDT
+description: Data reduction scripts and Python utilities for Lowell Discovery Telescope instruments
+theme: jekyll-theme-primer
+markdown: kramdown
+
+exclude:
+  - _site

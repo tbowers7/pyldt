@@ -58,6 +58,20 @@ Repository = "https://github.com/tbowers7/pyldt"
 [tool.black]
 target-version = ["py313"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pylint.main]
+ignore-paths = ["^pyldt/version.py$"]
+
+[tool.pylint.design]
+max-args = 13
+max-attributes = 11
+max-branches = 29
+max-locals = 35
+max-positional-arguments = 13
+max-statements = 89
+
 [tool.setuptools.packages.find]
 include = ["pyldt*"]
 

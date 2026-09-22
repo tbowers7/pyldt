@@ -30,6 +30,7 @@ import ccdproc
 import numpy as np
 import scipy.optimize
 import scipy.signal
+import scipy.spatial.distance
 
 # Internal Imports
 
@@ -89,8 +90,8 @@ def load_images(
     """
     Load comparison images for a grating.
 
-    Telescope altitude values are rounded in the source headers before the
-    collection is filtered by grating.
+    The returned collection is filtered by grating without modifying the
+    source files.
 
     Parameters
     ----------
@@ -110,13 +111,14 @@ def load_images(
     # Load the images of interest in to an ImageFileCollection()
     icl = ccdproc.ImageFileCollection(data_dir)
 
-    # Clean up the telescope altitude
-    for ccd, fname in icl.ccds(obstype="comparison", return_fname=True):
-        ccd.header["telalt"] = np.round(ccd.header["telalt"])
-        ccd.write(pathlib.Path(data_dir, fname), overwrite=True)
-
     # Return an ImageFileCollection filtered by the grating desired
-    return icl.filter(grating=gratid[grating])
+    try:
+        grating_name = gratid[grating]
+    except KeyError as err:
+        raise ValueError(
+            f"Unknown grating {grating!r}; choose one of {', '.join(gratid)}."
+        ) from err
+    return icl.filter(grating=grating_name)
 
 
 def get_line_positions(
@@ -178,7 +180,7 @@ def get_line_positions(
             {
                 "filename": fname,
                 "obserno": hdr["obserno"],
-                "telalt": hdr["telalt"],
+                "telalt": np.round(hdr["telalt"]),
                 "telaz": hdr["telaz"],
                 "rotangle": hdr["rotangle"],
                 "utcstart": hdr["utcstart"],
@@ -212,44 +214,46 @@ def validate_lines(table: astropy.table.Table) -> astropy.table.Table:
     `astropy.table.table.Table`
         AstroPy Table identical to input except the lines are validated
     """
-    print("Yay, Validation!!!!")
+    if len(table) == 0:
+        raise ValueError("No lines are available to validate: the table is empty.")
+    if any(not str(value).strip() for value in table["xpos"]):
+        raise ValueError("No lines were detected in one or more input images.")
 
-    # Create a variable to hold the FINAL LINES for this table
-    final_lines = None
-    for row in table:
-        # Line centers found for this image
-        cens = np.asarray([float(c) for c in row["xpos"].split(",")])
+    print("Validating lines...")
 
-        # If this is the first one, easy...
-        if final_lines is None:
-            final_lines = cens
-        else:
-            # Remove any canonical lines not in every image
-            for line in final_lines:
-                # If nothing is in the same ballpark (say, 12 pixels),
-                #   toss this canonical line
-                if np.min(np.absolute(cens - line)) > 12.0:
-                    final_lines = final_lines[final_lines != line]
+    detections = [
+        np.asarray([float(item) for item in str(row["xpos"]).split(",")])
+        for row in table
+    ]
+
+    # Retain only baseline lines that have a distinct match in every image.
+    # A nearest-neighbor assignment without reuse prevents two canonical lines
+    # from collapsing onto the same detected feature.
+    final_lines = detections[0]
+    for centers in detections[1:]:
+        distances = scipy.spatial.distance.cdist(
+            final_lines[:, np.newaxis], centers[:, np.newaxis]
+        )
+        rows, columns = scipy.optimize.linear_sum_assignment(distances)
+        matched = np.zeros(len(final_lines), dtype=bool)
+        matched[rows] = distances[rows, columns] <= 12.0
+        final_lines = final_lines[matched]
+        if final_lines.size == 0:
+            raise ValueError("No common spectral lines were found in every image.")
 
     n_final = len(final_lines)
     print(f"Validated {n_final} lines.")
     # Go back through, and replace the `xpos` value in each row with those
     #  lines corresponding to the good final lines
     xpos = []
-    for row in table:
-        # Line centers found for this image
-        cens = np.asarray([float(c) for c in row["xpos"].split(",")])
-
-        # Keep just the lines that match the canonical lines
-        keep_lines = []
-        for line in final_lines:
-            min_diff = np.min(np.absolute(diffs := cens - line))
-            idx = np.where(np.absolute(diffs) == min_diff)
-            # This is the line for this image that matches this canonical line
-            keep_lines.append(cens[idx])
-
-        # Put the array into a list to wholesale replace `xpos`
-        xpos.append(np.asarray(keep_lines).flatten())
+    for centers in detections:
+        distances = scipy.spatial.distance.cdist(
+            final_lines[:, np.newaxis], centers[:, np.newaxis]
+        )
+        rows, columns = scipy.optimize.linear_sum_assignment(distances)
+        matched = np.empty(len(final_lines), dtype=float)
+        matched[rows] = centers[columns]
+        xpos.append(matched)
 
     table["nlines"] = [n_final] * len(table)
     table["xpos"] = xpos
@@ -325,14 +329,15 @@ def extract_spectrum(
     # Set # orders, size of each order based on traces dimensionality; 0 -> return
     if traces.ndim == 0:
         return 0
-    norders, nx = (1, traces.size) if traces.ndim == 1 else traces.shape
+    use_traces = traces[np.newaxis, :] if traces.ndim == 1 else traces
+    norders, nx = use_traces.shape
 
     # Start out with an empty array
     spectra = np.empty((norders, nx), dtype=float)
 
     # Get the averaged spectra
     for io in range(norders):
-        spectra[io, :] = specavg(spectrum, traces[io, :], nspix)
+        spectra[io, :] = specavg(spectrum, use_traces[io, :], nspix)
 
     return spectra
 
@@ -361,11 +366,9 @@ def gaussfit_func(
     numpy.ndarray
         Array of y values corresponding to input a's and x
     """
-    # Silence RuntimeWarning for overflow, this function only
-    warnings.simplefilter("ignore", RuntimeWarning)
-
     z = (x - a1) / a2
-    return a0 * np.exp(-(z**2) / 2.0) + a3
+    with np.errstate(over="ignore", invalid="ignore"):
+        return a0 * np.exp(-(z**2) / 2.0) + a3
 
 
 def find_lines(
@@ -402,15 +405,12 @@ def find_lines(
     tuple of numpy.ndarray and list of float
         Array of line centers in pixels and their fitted FWHM values.
     """
-    # Silence OptimizeWarning, this function only
-    warnings.simplefilter("ignore", scipy.optimize.OptimizeWarning)
-
     # Define the half-window
     fhalfwin = int(np.floor(fit_window / 2))
 
     # Get size and flatten to 1D
-    _, nx = image.shape
-    spec = np.ndarray.flatten(image)
+    spec = np.asarray(image).ravel()
+    nx = spec.size
 
     # Find background from median value of the image:
     bkgd = np.median(spec)
@@ -424,11 +424,7 @@ def find_lines(
     j0 = 0
 
     # Step through the cut and identify peaks:
-    for j in range(nx):
-        # If we get too close to the end, skip
-        if j > (nx - minsep):
-            continue
-
+    for j in range(nx - 1):
         # If the spectrum at this pixel is above the THRESH...
         if spec[j] > (bkgd + thresh):
             # Mark this pixel as j1
@@ -438,20 +434,29 @@ def find_lines(
             if np.abs(j1 - j0) < minsep:
                 continue
 
-            # Loop through 0-FINDMAX...  (find central pixel?)
-            for jf in range(findmax):
-                itmp0 = spec[jf + j]
-                itmp1 = spec[jf + j + 1]
+            # Search only through pixels that actually remain in the spectrum.
+            icntr = None
+            search_stop = min(j + findmax, nx - 1)
+            for candidate in range(j, search_stop):
+                itmp0 = spec[candidate]
+                itmp1 = spec[candidate + 1]
                 if itmp1 < itmp0:
-                    icntr = jf + j
+                    icntr = candidate
                     break
+
+            # A monotonically rising tail has no local maximum to fit.
+            if icntr is None:
+                continue
 
             # If central pixel is too close to the edge, skip
             if (icntr < minsep / 2) or (icntr > (nx - minsep / 2 - 1)):
                 continue
 
             # Set up the gaussian fitting for this line
-            xmin, xmax = (icntr - fhalfwin, icntr + fhalfwin + 1)
+            xmin = max(0, icntr - fhalfwin)
+            xmax = min(nx, icntr + fhalfwin + 1)
+            if xmax - xmin < 4:
+                continue
             xx = np.arange(xmin, xmax, dtype=float)
             temp = spec[xmin:xmax]
             # Filter the SPEC to smooth it a bit for fitting
@@ -460,8 +465,10 @@ def find_lines(
             # Run the fit, with error checking
             try:
                 p0 = [1000, np.mean(xx), 3, bkgd]
-                aa, _ = scipy.optimize.curve_fit(gaussfit_func, xx, temp, p0=p0)
-            except RuntimeError:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", scipy.optimize.OptimizeWarning)
+                    aa, _ = scipy.optimize.curve_fit(gaussfit_func, xx, temp, p0=p0)
+            except (RuntimeError, ValueError):
                 continue  # Just skip this one
 
             # If the width makes sense, save
@@ -470,12 +477,13 @@ def find_lines(
                 fwhm.append(fw)
 
             # Set j0 to this pixel before looping on
-            j0 = jf + j
+            j0 = icntr
 
     # Make list into an array, check again that the centers make sense
     centers = np.asarray(cent)
-    c_idx = np.where(np.logical_and(centers > 0, centers <= nx))
-    centers = centers[c_idx]
+    valid = np.logical_and(centers > 0, centers < nx)
+    centers = centers[valid]
+    fwhm = np.asarray(fwhm)[valid].tolist()
 
     if verbose:
         print(f" Number of lines: {len(centers)}")
@@ -506,6 +514,10 @@ def specavg(spectrum: np.ndarray, trace: np.ndarray, wsize: int) -> np.ndarray |
     if spectrum.ndim == 0:
         return 0
     nx = (spectrum.shape)[-1]
+    if len(trace) != nx:
+        raise ValueError("Trace length must match the spectral image width.")
+    if wsize < 1:
+        raise ValueError("Extraction window size must be positive.")
 
     speca = np.empty(nx, dtype=float)
     whalfsize = int(np.floor(wsize / 2))
@@ -513,8 +525,11 @@ def specavg(spectrum: np.ndarray, trace: np.ndarray, wsize: int) -> np.ndarray |
     # Because of python indexing, we need to "+1" the upper limit in order
     #   to get the full wsize elements for the average
     for i in range(nx):
-        speca[i] = np.average(
-            spectrum[int(trace[i]) - whalfsize : int(trace[i]) + whalfsize + 1, i]
-        )
+        center = int(trace[i])
+        lower = max(0, center - whalfsize)
+        upper = min(spectrum.shape[0], center + whalfsize + 1)
+        if lower >= upper:
+            raise ValueError(f"Trace position {trace[i]} is outside the image.")
+        speca[i] = np.average(spectrum[lower:upper, i])
 
     return speca.reshape((1, nx))

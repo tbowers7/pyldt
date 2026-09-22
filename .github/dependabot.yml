@@ -1,0 +1,20 @@
+# Keep GitHub Actions and Python dependencies current with grouped monthly PRs.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "main"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "main"
+    labels:
+      - "pip dependencies"
+    schedule:
+      interval: "monthly"

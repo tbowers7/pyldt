@@ -1,0 +1,3 @@
+[submodule "SOFIACruiseTools"]
+	path = SOFIACruiseTools
+	url = https://github.com/astrobokonon/SOFIACruiseTools.git

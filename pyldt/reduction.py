@@ -26,39 +26,65 @@ software of your choosing.
 from __future__ import annotations
 
 # Built-In Libraries
-import datetime
+import functools
 import pathlib
 import shutil
-import sys
 import typing
 import warnings
 
 # 3rd Party Libraries
-import astropy.convolution
 import astropy.io.fits
-import astropy.modeling
 import astropy.nddata
 import astropy.stats
 import astropy.units as u
 from astropy.utils.exceptions import AstropyWarning
 import ccdproc
-import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-# Lowell Packages
-import obstools.utils
-
 # Internal Imports
-from pyldt import utils
-from pyldt.version import version
+from pyldt import qa
+from pyldt.calibration import (
+    PKG_NAME,
+    add_package_versions,
+    clean_nans,
+    parse_lois_ampids,
+    savetime,
+    trim_oscan,
+    wrap_trim_oscan,
+    write_ccd_atomic,
+)
+from pyldt.combine import imcombine
+from pyldt.errors import InputError
 
 # Define API
-__all__ = ["LMI", "NASA42", "imcombine", "savetime", "trim_oscan", "wrap_trim_oscan"]
+__all__ = [
+    "LMI",
+    "NASA42",
+    "imcombine",
+    "parse_lois_ampids",
+    "savetime",
+    "trim_oscan",
+    "wrap_trim_oscan",
+]
 
 
-# Global Variables
-PKG_NAME = f"PyLDT {'='*55}"  # For header metadata printing
+def _control_warnings(
+    method: typing.Callable[..., typing.Any],
+) -> typing.Callable[..., typing.Any]:
+    """Apply an image directory's warning preference only for one method call."""
+
+    @functools.wraps(method)
+    def wrapped(
+        self: "ImageDirectory", *args: typing.Any, **kwargs: typing.Any
+    ) -> typing.Any:
+        with warnings.catch_warnings():
+            if not self.show_warnings:
+                warnings.simplefilter("ignore", AstropyWarning)
+                warnings.simplefilter("ignore", UserWarning)
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 class ImageDirectory:
@@ -104,10 +130,7 @@ class ImageDirectory:
         """
         # Settings that determine how the class functions
         self.debug = debug
-        # Unless specified, suppress AstroPy warnings
-        if not show_warnings:
-            warnings.simplefilter("ignore", AstropyWarning)
-            warnings.simplefilter("ignore", UserWarning)
+        self.show_warnings = show_warnings
 
         # Metadata related to all files in this directory
         self.path = pathlib.Path(path)
@@ -125,6 +148,27 @@ class ImageDirectory:
         # Create Placeholder for initial ImageFileCollection for the directory
         self.icl = None
 
+    @staticmethod
+    def write_ccd_atomic(
+        ccd: astropy.nddata.CCDData,
+        filename: str | pathlib.Path,
+        *,
+        overwrite: bool = True,
+    ) -> None:
+        """Write a CCD to a sibling temporary file and atomically replace it."""
+        write_ccd_atomic(ccd, filename, overwrite=overwrite)
+
+    def image_file_collection(
+        self, *args: typing.Any, **kwargs: typing.Any
+    ) -> ccdproc.ImageFileCollection:
+        """Create an image collection under this instance's warning policy."""
+        with warnings.catch_warnings():
+            if not self.show_warnings:
+                warnings.simplefilter("ignore", AstropyWarning)
+                warnings.simplefilter("ignore", UserWarning)
+            return ccdproc.ImageFileCollection(*args, **kwargs)
+
+    @_control_warnings
     def inspect_images(self) -> None:
         """
         Inspect the images in the specified directory
@@ -197,7 +241,7 @@ class ImageDirectory:
             # Fix depricated FITS keyword
             if "RADECSYS" in ccd.header:
                 ccd.header.rename_keyword("RADECSYS", "RADESYSa")
-            ccd.write(self.path / fname, overwrite=True)
+            self.write_ccd_atomic(ccd, self.path / fname)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -226,6 +270,7 @@ class ImageDirectory:
                 print(f"Copying {img} to {raw_data}...")
                 shutil.copy2(img, raw_data)
 
+    @_control_warnings
     def bias_combine(
         self,
         keep_orig: bool = False,
@@ -269,7 +314,10 @@ class ImageDirectory:
             total=len(bias_files), unit="frame", unit_scale=False, colour="#808080"
         )
 
-        # Loop through files,
+        # Loop through files, tracking this invocation's products explicitly so
+        # stale trimmed frames cannot enter the master bias.
+        trimmed_files = []
+        original_bias_files = []
         for ccd, file_name in self.icl.ccds(
             ccdsum=self.binning, imagetyp="bias", bitpix=16, return_fname=True
         ):
@@ -283,9 +331,10 @@ class ImageDirectory:
             ccd.header = self.add_package_versions(ccd.header)
 
             # Save the result (suffix = 't'); delete the input file
-            ccd.write(self.path / f"{file_name[:-5]}t{file_name[-5:]}", overwrite=True)
-            if not keep_orig:
-                self.path.joinpath(file_name).unlink()
+            trimmed_fn = self.path / f"{file_name[:-5]}t{file_name[-5:]}"
+            self.write_ccd_atomic(ccd, trimmed_fn)
+            trimmed_files.append(trimmed_fn)
+            original_bias_files.append(self.path / file_name)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -293,9 +342,7 @@ class ImageDirectory:
         prog_bar.close()
 
         # Collect the trimmed biases
-        t_bias_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f"{self.prefix}.*t.fits"
-        )
+        t_bias_cl = ccdproc.ImageFileCollection(filenames=trimmed_files)
 
         # If no trimmed biases, return now
         if not t_bias_cl.files:
@@ -331,11 +378,15 @@ class ImageDirectory:
 
         # Save the result; delete the input files
         comb_bias.header = self.add_package_versions(comb_bias.header)
-        comb_bias.write(self.path / self.zerofn, overwrite=True)
+        self.write_ccd_atomic(comb_bias, self.path / self.zerofn)
+        if not keep_orig:
+            for filename in original_bias_files:
+                filename.unlink()
         if not keep_trimmed:
-            for fname in t_bias_cl.files:
-                self.path.joinpath(fname).unlink()
+            for filename in trimmed_files:
+                filename.unlink()
 
+    @_control_warnings
     def bias_subtract(self, keep_orig: bool = False, gain_correct: bool = True) -> None:
         """
         Subtract the combined bias from the images.
@@ -374,10 +425,16 @@ class ImageDirectory:
             total=len(self.icl.files), unit="frame", unit_scale=False, colour="blue"
         )
 
-        # Loop through files,
+        # Loop through files. Retained raw biases are calibration inputs, not
+        # targets for bias subtraction. Defer deletion until the entire stage
+        # succeeds.
+        processed_inputs = []
         for ccd, file_name in self.icl.ccds(
             ccdsum=self.binning, bitpix=16, return_fname=True
         ):
+            if str(ccd.header.get("imagetyp", "")).strip().casefold() == "bias":
+                continue
+
             # Fit the overscan section, subtract it, then trim the image
             ccd = wrap_trim_oscan(ccd, gain_correct=gain_correct)
 
@@ -392,15 +449,18 @@ class ImageDirectory:
 
             # Save the result (suffix = 'b'); delete input file
             ccd.header = self.add_package_versions(ccd.header)
-            ccd.write(self.path / f"{file_name[:-5]}b{file_name[-5:]}", overwrite=True)
-            if not keep_orig:
-                self.path.joinpath(file_name).unlink()
+            self.write_ccd_atomic(ccd, self.path / f"{file_name[:-5]}b{file_name[-5:]}")
+            processed_inputs.append(self.path / file_name)
 
             # Update the progress bar
             prog_bar.update(1)
         # Close the progress bar, end of loop
         prog_bar.close()
+        if not keep_orig:
+            for filename in processed_inputs:
+                filename.unlink()
 
+    @_control_warnings
     def flat_combine(
         self,
         keep_subtracted: bool = False,
@@ -451,7 +511,11 @@ class ImageDirectory:
             total=len(flat_cl.files), unit="frame", unit_scale=False, colour="yellow"
         )
 
-        # Normalize flat field images by the mean value
+        # Normalize flat field images by the mean value. Keep explicit track of
+        # the products made by this invocation so stale intermediates from an
+        # earlier or interrupted run cannot enter the combination.
+        normalized_files = []
+        subtracted_files = []
         for ccd, flat_fn in flat_cl.ccds(return_fname=True):
             # Get the indices of the region over which to measure the mean
             if norm_use_center_only:
@@ -477,9 +541,10 @@ class ImageDirectory:
 
             # Save the result (suffix = 'n'); delete the input file
             ccd.header = self.add_package_versions(ccd.header)
-            ccd.write(self.path / f"{flat_fn[:-6]}n{flat_fn[-5:]}", overwrite=True)
-            if not keep_subtracted:
-                self.path.joinpath(flat_fn).unlink()
+            normalized_fn = self.path / f"{flat_fn[:-6]}n{flat_fn[-5:]}"
+            self.write_ccd_atomic(ccd, normalized_fn)
+            normalized_files.append(normalized_fn)
+            subtracted_files.append(self.path / flat_fn)
 
             # Update the progress bar
             prog_bar.update(1)
@@ -487,9 +552,11 @@ class ImageDirectory:
         prog_bar.close()
 
         # Load the list of normalized flat field images
-        norm_cl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f"{self.prefix}.*n.fits"
-        )
+        if not normalized_files:
+            print("No flats to be combined.")
+            return
+
+        norm_cl = ccdproc.ImageFileCollection(filenames=normalized_files)
         if norm_cl.files:
             # Combine flat field frames separately for each flat type and filter.
             # In particular, do not mix (for example) sky and dome flats taken
@@ -533,7 +600,7 @@ class ImageDirectory:
                     cflat.header["HISTORY"] = PKG_NAME
                     cflat.header["HISTORY"] = "Combined flat created: " + savetime()
                     cflat.header["HISTORY"] = (
-                        "Median combined " + f"{len(flats)} files:"
+                        "Average combined " + f"{len(flats)} files:"
                     )
                     for fname in flats:
                         # Remove the path portion of the filename for the HISTORY
@@ -544,16 +611,24 @@ class ImageDirectory:
                     if self.debug:
                         print(f"Saving combined flat as {flat_fn}")
                     cflat.header = self.add_package_versions(cflat.header)
-                    cflat.write(self.path / flat_fn, overwrite=True)
-                    if not keep_normalized:
-                        for fname in flats:
-                            # Path name is already included
-                            pathlib.Path(fname).unlink()
+                    self.write_ccd_atomic(cflat, self.path / flat_fn)
+
+            # Delete inputs only after every master flat has been created
+            # successfully, leaving a recoverable state if any group fails.
+            if not keep_subtracted:
+                for filename in subtracted_files:
+                    filename.unlink()
+            if not keep_normalized:
+                for filename in normalized_files:
+                    filename.unlink()
 
         else:
             print("No flats to be combined.")
 
-    def divide_by_flat(self, keep_subtracted: bool = False) -> None:
+    @_control_warnings
+    def divide_by_flat(
+        self, flat_type: str = "skyflat", keep_subtracted: bool = False
+    ) -> None:
         """
         Divide frames by the appropriate flatfield
 
@@ -563,6 +638,11 @@ class ImageDirectory:
 
         Parameters
         ----------
+        flat_type : :obj:`str`, optional
+            Flat type to use when more than one type is available. Spaces and
+            capitalization are ignored when matching. If only one flat type is
+            available, it is used regardless of this value. (Default:
+            ``"skyflat"``)
         keep_subtracted : :obj:`bool`, optional
             Keep the bias-subtracted (`i.e.`, input) image?  (Default: False)
         """
@@ -579,152 +659,90 @@ class ImageDirectory:
             print("No flats and/or no science images.  Skipping flat divide...")
             return
 
-        # Check to be sure there are, indeed, flats...
-        if flat_cl.files:
-            # Loop through the filters present
-            for filt in sorted(list(flat_cl.summary["filters"])):
-                # Load in the combined flat for this filter
-                if self.debug:
-                    print(
-                        f"Dividing science frames by combined flat for filter: {filt}"
-                    )
-                combined_flat, mflat_fn = next(
-                    flat_cl.ccds(ccdsum=self.binning, filters=filt, return_fname=True)
+        # Select exactly one type of flat. If there is only one available type,
+        # use it even when a different type was requested.
+        available_flat_types = sorted(set(flat_cl.summary["imagetyp"]))
+        flat_types_by_tag = {
+            "".join(str(available_type).split()).casefold(): available_type
+            for available_type in available_flat_types
+        }
+        if len(available_flat_types) == 1:
+            selected_flat_type = available_flat_types[0]
+        else:
+            requested_tag = "".join(flat_type.split()).casefold()
+            try:
+                selected_flat_type = flat_types_by_tag[requested_tag]
+            except KeyError as err:
+                available = ", ".join(str(item) for item in available_flat_types)
+                raise InputError(
+                    f"Flat type {flat_type!r} is not available. "
+                    f"Choose one of: {available}."
+                ) from err
+
+        flat_cl = flat_cl.filter(imagetyp=selected_flat_type)
+        if self.debug:
+            print(f"Using {selected_flat_type} frames for flat correction.")
+
+        # Loop through the filters present. Defer removal of the input science
+        # frames until every requested filter has completed successfully.
+        corrected_inputs = []
+        for filt in sorted(set(flat_cl.summary["filters"])):
+            # Load in the combined flat for this filter
+            if self.debug:
+                print(f"Dividing science frames by combined flat for filter: {filt}")
+            combined_flat, mflat_fn = next(
+                flat_cl.ccds(ccdsum=self.binning, filters=filt, return_fname=True)
+            )
+
+            # Set up a progress bar, so we can see how the process is going
+            sci_filt_files = sci_cl.files_filtered(filters=filt)
+            prog_bar = tqdm(
+                total=len(sci_filt_files),
+                unit="frame",
+                unit_scale=False,
+                colour="#D8BFD8",
+            )
+
+            # Loop through the science frames to correct
+            for ccd, sci_fn in sci_cl.ccds(
+                ccdsum=self.binning, filters=filt, return_fname=True
+            ):
+                # Divide by combined flat
+                ccd = ccdproc.flat_correct(ccd, combined_flat)
+
+                # Update the header
+                ccd.header["flatcor"] = True
+                ccd.header["HISTORY"] = PKG_NAME
+                ccd.header["HISTORY"] = "Flat-corrected image saved: " + savetime()
+                ccd.header["HISTORY"] = f"Divided by flat: {mflat_fn}"
+                ccd.header["HISTORY"] = f"Previous filename: {sci_fn}"
+
+                # Save the result (suffix = 'f'); delete the input file
+                ccd.header = self.add_package_versions(ccd.header)
+                self.write_ccd_atomic(
+                    ccd,
+                    self.path / f"{sci_fn[:-6]}f{sci_fn[-5:]}",
                 )
+                corrected_inputs.append(self.path / sci_fn)
 
-                # Set up a progress bar, so we can see how the process is going
-                sci_filt_files = sci_cl.files_filtered(filters=filt)
-                prog_bar = tqdm(
-                    total=len(sci_filt_files),
-                    unit="frame",
-                    unit_scale=False,
-                    colour="#D8BFD8",
-                )
+                # Update the progress bar
+                prog_bar.update(1)
+            # Close the progress bar, end of loop
+            prog_bar.close()
+        if not keep_subtracted:
+            for filename in corrected_inputs:
+                filename.unlink()
 
-                # Loop through the science frames to correct
-                for ccd, sci_fn in sci_cl.ccds(
-                    ccdsum=self.binning, filters=filt, return_fname=True
-                ):
-                    # Divide by combined flat
-                    ccdproc.flat_correct(ccd, combined_flat)
-
-                    # Update the header
-                    ccd.header["flatcor"] = True
-                    ccd.header["HISTORY"] = PKG_NAME
-                    ccd.header["HISTORY"] = "Flat-corrected image saved: " + savetime()
-                    ccd.header["HISTORY"] = f"Divided by flat: {mflat_fn}"
-                    ccd.header["HISTORY"] = f"Previous filename: {sci_fn}"
-
-                    # Save the result (suffix = 'f'); delete the input file
-                    ccd.header = self.add_package_versions(ccd.header)
-                    ccd.write(
-                        self.path / f"{sci_fn[:-6]}f{sci_fn[-5:]}",
-                        overwrite=True,
-                    )
-                    if not keep_subtracted:
-                        self.path.joinpath(sci_fn).unlink()
-
-                    # Update the progress bar
-                    prog_bar.update(1)
-                # Close the progress bar, end of loop
-                prog_bar.close()
-
-    def QA_bias(
+    def QA_bias(  # pylint: disable=invalid-name
         self,
         input_icl: ccdproc.ImageFileCollection,
         output_bias: astropy.nddata.CCDData,
         typesize: float = 8,
     ) -> None:
-        """
-        Produce QA plots for the bias combination
+        """Produce QA plots for a bias combination."""
+        qa.bias_plots(self.path, input_icl, output_bias, typesize)
 
-        This should make pixel histograms for each of the input bias frames and
-        for the combined frame.
-
-        Parameters
-        ----------
-        input_icl : :obj:`~ccdproc.ImageFileCollection`
-            The input biases collection for the combination
-        output_bias : :obj:`~astropy.nddata.CCDData`
-            The output combined bias
-        typesize : :obj:`float`
-            Typesize for the output plots  (Default: 8)
-        """
-        # Create the QA directory, if needed
-        qa_dir = (self.path / "QA").resolve()
-        qa_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Writing the Bias QA plots to {(qa_dir / 'Bias_QA.png')}")
-
-        # Construct the plotting environment
-        _, axis = plt.subplots()
-
-        # Preamble -- let's hope the first CCD is not messed up
-        hist_bins, binsz_str = self.get_qa_histbins(next(input_icl.ccds()))
-        x_unit = output_bias.header["BUNIT"]
-
-        # Loop through the files in the IFC and make histograms
-        for ccd in input_icl.ccds():
-            axis.hist(
-                ccd.data.flatten(),
-                bins=hist_bins,
-                histtype="step",
-                linewidth=0.8,
-                alpha=0.35,
-            )
-
-        # Histogram the combined bias, fit and plot a gaussian
-        npix, bins, _ = axis.hist(
-            output_bias.data.flatten(),
-            bins=hist_bins,
-            histtype="step",
-            label="Combined Bias",
-            linewidth=2.0,
-        )
-        centers = (bins[:-1] + bins[1:]) / 2
-        popt, _ = obstools.utils.gaussfit(centers, npix)
-        axis.plot(
-            centers,
-            obstools.utils.gaussian_function(centers, *popt),
-            color="red",
-            label="Gaussian Fit to Combined Bias",
-        )
-
-        # Add text with various statistics
-        axis.text(
-            0.1,
-            0.9,
-            rf"Gaussian $\mu$ = {popt[1]:.2f} {x_unit}"
-            "\n"
-            rf"Gaussian $\sigma$ = {popt[2]:.2f} {x_unit}",
-            transform=axis.transAxes,
-            fontsize=typesize,
-        )
-        # Get some statistics
-        n_outliers = np.sum(np.abs(output_bias.data.flatten() - popt[1]) > 5 * popt[2])
-        axis.text(
-            0.1,
-            0.75,
-            rf"Pixels beyond 5$\sigma$ = {n_outliers / output_bias.data.size * 100:.2f}%",
-            transform=axis.transAxes,
-            fontsize=typesize,
-        )
-
-        # Set titles & legend
-        axis.set_ylabel(f"N pixels per {binsz_str} {x_unit} bin", fontsize=typesize)
-        axis.set_xlabel(f"Pixel Value ({x_unit})", fontsize=typesize)
-        axis.set_title(
-            f"Bias Frame QA: {len(input_icl.files)} frames", fontsize=typesize + 2
-        )
-        axis.legend(fontsize=typesize)
-
-        # Finish up and save
-        utils.set_std_tickparams(axis, typesize)
-        plt.tight_layout()
-        for suffix in ["pdf", "png"]:
-            plt.savefig(qa_dir / f"Bias_QA.{suffix}")
-        plt.close()
-
-    def QA_flat(
+    def QA_flat(  # pylint: disable=invalid-name
         self,
         input_icl: ccdproc.ImageFileCollection,
         output_flat: astropy.nddata.CCDData,
@@ -732,239 +750,39 @@ class ImageDirectory:
         typesize: float = 8,
         flat_type: str | None = None,
     ) -> None:
-        """
-        Produce QA plots for the flat combination
-
-        This should make pixel histograms for each of the input flat frames and
-        for the combined frame.
-
-        Parameters
-        ----------
-        input_icl : :obj:`~ccdproc.ImageFileCollection`
-            The input flats collection for the combination
-        output_flat : :obj:`~astropy.nddata.CCDData`
-            The output combined flat
-        filtername : :obj:`str`
-            The name of the filter for this set of flats
-        typesize : :obj:`float`
-            Typesize for the output plots  (Default: 8)
-        flat_type : :obj:`str`, optional
-            The image type for this set of flats, such as ``"sky flat"`` or
-            ``"dome flat"``. Used to distinguish QA products for a filter.
-        """
-        # Create the QA directory, if needed
-        qa_dir = (self.path / "QA").resolve()
-        qa_dir.mkdir(parents=True, exist_ok=True)
-        flat_label = "" if flat_type is None else f"{flat_type.replace(' ', '')}_"
-        qa_stem = f"Flat_{flat_label}{filtername}_QA"
-        print(f"Writing the Flat QA plots to  {(qa_dir / f'{qa_stem}.png')}")
-
-        # Construct the plotting environment
-        _, axis = plt.subplots()
-
-        # Preamble -- let's hope the first CCD is not messed up
-        hist_bins, binsz_str = self.get_qa_histbins(next(input_icl.ccds()))
-        x_unit = (
-            "unitless"
-            if output_flat.header["BUNIT"] == ""
-            else output_flat.header["BUNIT"]
+        """Produce QA plots for a flat combination."""
+        qa.flat_plots(
+            self.path,
+            input_icl,
+            output_flat,
+            filtername,
+            typesize,
+            flat_type,
         )
 
-        # Loop through the files in the IFC and make histograms
-        for ccd in input_icl.ccds():
-            axis.hist(
-                ccd.data.flatten(),
-                bins=hist_bins,
-                histtype="step",
-                linewidth=0.8,
-                alpha=0.35,
-            )
-
-        # Histogram the combined flat, fit and plot a gaussian
-        npix, bins, _ = axis.hist(
-            output_flat.data.flatten(),
-            bins=hist_bins,
-            histtype="step",
-            label="Combined Flat",
-            linewidth=2.0,
-        )
-        centers = (bins[:-1] + bins[1:]) / 2
-        p0 = [np.amax(npix), centers[np.argmax(npix)], 0.1]
-        popt, _ = obstools.utils.gaussfit(centers, npix, estimates=p0)
-        axis.plot(
-            centers,
-            obstools.utils.gaussian_function(centers, *popt),
-            color="red",
-            label="Gaussian Fit to Combined Flat",
-        )
-
-        # Add text with various statistics
-        axis.text(
-            0.1,
-            0.9,
-            rf"Gaussian $\mu$ = {popt[1]:.2f} {x_unit}"
-            "\n"
-            rf"Gaussian $\sigma$ = {popt[2]:.2f} {x_unit}",
-            transform=axis.transAxes,
-            fontsize=typesize,
-        )
-        # Get some statistics
-        n_outliers = np.sum(np.abs(output_flat.data.flatten() - popt[1]) > 5 * popt[2])
-        axis.text(
-            0.1,
-            0.75,
-            rf"Pixels beyond 5$\sigma$ = {n_outliers / output_flat.data.size * 100:.2f}%",
-            transform=axis.transAxes,
-            fontsize=typesize,
-        )
-
-        # Set titles & legend
-        axis.set_ylabel(f"N pixels per {binsz_str} {x_unit} bin", fontsize=typesize)
-        axis.set_xlabel(f"Pixel Value ({x_unit})", fontsize=typesize)
-        axis.set_title(
-            f"Flat Frame ({filtername} filter) QA: {len(input_icl.files)} frames",
-            fontsize=typesize + 2,
-        )
-        axis.legend(fontsize=typesize)
-
-        # Finish up and save
-        utils.set_std_tickparams(axis, typesize)
-        plt.tight_layout()
-        for suffix in ["pdf", "png"]:
-            plt.savefig(qa_dir / f"{qa_stem}.{suffix}")
-        plt.close()
+    @staticmethod
+    def sample_pixels(data: np.ndarray, max_pixels: int = 1_000_000) -> np.ndarray:
+        """Return an evenly strided sample of an image."""
+        return qa.sample_pixels(data, max_pixels)
 
     @staticmethod
     def get_qa_histbins(
         ccd: astropy.nddata.CCDData,
     ) -> tuple[np.ndarray, str]:
-        """
-        Generate sensible histogram bins for QA plots
-
-        There should be something like 100 bins (give or take) across the
-        displayed histogram.  The bin sizes should be some simple, human-
-        thinkable value (like 0.5 or 10), and the displayed range should
-        be something like median ± 5σ, rounded to some simple, human-thinkable
-        value (like nearest 10 or 1000).
-
-        Parameters
-        ----------
-        ccd : :obj:`~astropy.nddata.CCDData`
-            The CCDData object for which to generate histogram bins
-
-        Returns
-        -------
-        tuple of numpy.ndarray and str
-            Histogram bin edges and a display-friendly bin-size string.
-        """
-        # First, get the (sigma-clipped) median and std of the data
-        _, median, std = astropy.stats.sigma_clipped_stats(ccd.data, sigma=5.0)
-
-        # Compute the raw range from `median - 5σ` to `median + 5σ`
-        raw_range = median + np.array([-5, 5]) * std
-
-        # Given that we want ~100 bins in this range, compute the finished binsize
-        # Bin sizes may be powers of 10 times [1, 2, 5]
-        logbins = np.array(
-            [np.log10([1, 2, 5]) + b for b in np.arange(-5, 6)]
-        ).flatten()
-        raw_logbin = np.log10(np.diff(raw_range) / 100)
-        binsize = 10 ** (logbins[np.abs(logbins - raw_logbin).argmin()])
-
-        # Compute the sensible plot range start & stop positions
-        # The "multiples of" that the plotmin and plotmax should be are
-        #  computed as the floor power of 10 of 1/2 the span of `raw_range`
-        mult_factor = 10 ** np.floor(np.log10(np.diff(raw_range) / 2.0))
-        plotmin, plotmax = np.round(raw_range / mult_factor) * mult_factor
-
-        # Next, determine the binsize string, precision based on value
-        prec = np.maximum(-np.floor(np.log10(binsize)), 0).astype(int)
-        binsz_str = f"{binsize:.{prec}f}"
-
-        # Return the array from `plotmin` to `plotmax` in steps of `binsize`
-        return np.arange(plotmin, plotmax, binsize), binsz_str
+        """Generate robust histogram bins for a CCD image."""
+        return qa.get_histbins(ccd)
 
     @staticmethod
     def add_package_versions(
         hdr: astropy.io.fits.Header,
     ) -> astropy.io.fits.Header:
-        """
-        Add or update dependent package versions.
-
-        Include the version information for dependent packages in the FITS
-        headers for the purposes for debugging if something changes in the
-        underlying infrastructure.  By comparing package version numbers,
-        it may be possible to pinpoint when a change in a dependency causes
-        problems in this package's output.
-
-        Parameters
-        ----------
-        hdr : :obj:`astropy.io.fits.Header`
-            The FITS header to which to add/update package version info
-
-        Returns
-        -------
-        :obj:`astropy.io.fits.Header`
-            The updated FITS header
-        """
-        # Add Python, Astropy, CCDPROC, and Numpy version numbers
-        hdr["VERSPYT"] = (
-            ".".join([str(v) for v in sys.version_info[:3]]),
-            "Python version",
-        )
-        hdr["VERSAST"] = (astropy.__version__, "Astropy version")
-        hdr["VERSCCD"] = (ccdproc.__version__, "CCDPROC version")
-        hdr["VERSNPY"] = (np.__version__, "Numpy version")
-        hdr["VERSLDT"] = (version, "PyLDT version")
-
-        return hdr
+        """Add dependency and PyLDT versions to a FITS header."""
+        return add_package_versions(hdr)
 
     @staticmethod
     def clean_nans(ccd: astropy.nddata.CCDData) -> astropy.nddata.CCDData:
-        """
-        Clean the NaN's from a CCDData object by interpolation
-
-        This method performs a cleaning of NaN values in a ``CCDData`` object.
-        The issue is not simply removing NaN's in the data attribute, but also
-        adjusting the mask and uncertainty attributes to align with the
-        cleaned data.
-
-        The replacement algorithm is provided by
-        :func:`astropy.convolution.interpolate_replace_nans`, used alongside
-        a 2D Gaussian kernel with sigma = 1 pixel.  This effectively replaces
-        NaN values with a smoothed average of the surrounding pixels.
-
-        Parameters
-        ----------
-        ccd : :obj:`astropy.nddata.CCDData`
-            The input ``CCDData`` object to be cleaned.
-
-        Returns
-        -------
-        :obj:`astropy.nddata.CCDData`
-            The resulting cleaned ``CCDData`` object.  The cleaning is done
-            in place.
-        """
-        # Clean up the image by interpolating over NaN's:
-        before_nan = (~np.isfinite(ccd.data)).sum()
-        ccd.data = astropy.convolution.interpolate_replace_nans(
-            ccd.data, kernel := astropy.convolution.Gaussian2DKernel(x_stddev=1)
-        )
-
-        # Update the image mask
-        ccd.mask = ~np.isfinite(ccd.data)
-        print(
-            "   Number of initial / final NaN pixels:   "
-            f"{before_nan} / {ccd.mask.sum()}"
-        )
-
-        # Update the image uncertainty by smoothing, too
-        ccd.uncertainty.array = astropy.convolution.interpolate_replace_nans(
-            ccd.uncertainty.array, kernel
-        )
-
-        # Return the updated CCDData object
-        return ccd
+        """Interpolate non-finite data without discarding existing masks."""
+        return clean_nans(ccd)
 
 
 class LMI(ImageDirectory):
@@ -1034,8 +852,8 @@ class LMI(ImageDirectory):
         self.zerofn = f"bias_bin{self.bin_factor}.fits"
 
         # Load initial ImageFileCollection
-        self.icl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f"{self.prefix}.*.fits"
+        self.icl = self.image_file_collection(
+            self.path, glob_include=f"{self.prefix}.????.fits"
         )
 
     def process_all(self) -> None:
@@ -1046,11 +864,11 @@ class LMI(ImageDirectory):
         in the specified directory (and given binning) through all of the basic
         calibration steps.  The procedure is:
             * copy_raw() -- Make a copy of the raw data in a safe place
-            * insepct_images() -- Make sure the relevant metadata is set
+            * inspect_images() -- Make sure the relevant metadata is set
             * bias_combine() -- Combine the bias frames into a Calibration bias
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
-            * divide_flat() -- Divide all science frames by the appropriate flat
+            * divide_by_flat() -- Divide science frames by the appropriate flat
         """
         self.copy_raw()
         self.inspect_images()
@@ -1097,7 +915,7 @@ class NASA42(ImageDirectory):
         bin_factor: int = 2,
         mem_limit: float = 8.192e9,
         prefix: str | None = None,
-        **kwargs: typing.AbstractSetAny,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Initialize a NASA42 image directory.
@@ -1136,6 +954,11 @@ class NASA42(ImageDirectory):
             fitsfiles = sorted(self.path.glob("20*.????.fits"))
             if fitsfiles:
                 self.prefix = fitsfiles[0].name.split(".")[0]
+            else:
+                raise InputError(
+                    "Could not infer the NASA42 filename prefix: no raw FITS "
+                    "files matched '20*.????.fits'."
+                )
         else:
             self.prefix = prefix
         if self.debug:
@@ -1143,8 +966,8 @@ class NASA42(ImageDirectory):
         self.zerofn = f"bias_bin{self.bin_factor}.fits"
 
         # Load initial ImageFileCollection
-        self.icl = ccdproc.ImageFileCollection(
-            self.path, glob_include=f"{self.prefix}.*.fits"
+        self.icl = self.image_file_collection(
+            self.path, glob_include=f"{self.prefix}.????.fits"
         )
 
     def process_all(self) -> None:
@@ -1155,11 +978,11 @@ class NASA42(ImageDirectory):
         in the specified directory (and given binning) through all of the basic
         calibration steps.  The procedure is:
             * copy_raw() -- Make a copy of the raw data in a safe place
-            * insepct_images() -- Make sure the relevant metadata is set
+            * inspect_images() -- Make sure the relevant metadata is set
             * bias_combine() -- Combine the bias frames into a Calibration bias
             * bias_subtract() -- Subtract the bias & overscan from all frames
             * flat_combine() -- Combine flat fields of a given filter
-            * divide_flat() -- Divide all science frames by the appropriate flat
+            * divide_by_flat() -- Divide science frames by the appropriate flat
         """
         self.copy_raw()
         self.inspect_images()
@@ -1167,369 +990,3 @@ class NASA42(ImageDirectory):
         self.bias_subtract()
         self.flat_combine()
         self.divide_by_flat()
-
-
-# Error Classes
-class PyldtError(Exception):
-    """
-    Base class for exceptions in this module.
-    """
-
-
-class InputError(PyldtError):
-    """
-    Exception raised for errors in the input.
-
-    Parameters
-    ----------
-    message : str
-        Explanation of the invalid input.
-
-    Attributes
-    ----------
-    message : str
-        Explanation of the invalid input.
-    """
-
-    def __init__(self, message: str) -> None:
-        """
-        Initialize the exception.
-
-        Parameters
-        ----------
-        message : str
-            Explanation of the invalid input.
-        """
-        super().__init__(message)
-        self.message = message
-
-
-# Non-class function definitions =============================================#
-def imcombine(
-    *infiles: list[str | pathlib.Path],
-    inlist: str | pathlib.Path | None = None,
-    outfn: str | pathlib.Path | None = None,
-    del_input: bool = False,
-    combine: str | None = None,
-    printstat: bool = True,
-    overwrite: bool = True,
-    returnccd: bool = False,
-    mem_limit: float = 8.192e9,
-) -> astropy.nddata.CCDData | None:
-    """
-    Combine a collection of images
-
-    This function (crudely) emulates the IRAF imcombine function.  Pass in a
-    list of images to be combined, and the result is written to disk with an
-    optionally specified output filename.
-
-    Parameters
-    ----------
-    *infiles : list, optional
-        Lists of filenames to combine.
-    inlist : :obj:`str`, optional
-        Filename of text file listing images to be combined  (Default: None)
-    outfn : :obj:`str`, optional
-        Filename to write combined image.  If ``None``, then append the string
-        ``"_comb"`` to the first filename in the input list.  (Default: None)
-    del_input : :obj:`bool`, optional
-        Delete the input files after combination?  (Default: False)
-    combine : :obj:`str`, optional
-        Combine method, may be either ``"median"``, ``"mean"`` or ``None``.  If
-        ``None``, then this will be set to ``"median"``.
-    printstat : :obj:`bool`, optional
-        Print image statistics to screen?  (Default: True)
-    overwrite : :obj:`bool`, optional
-        Overwrite any existing output file?  (Default: True)
-    returnccd : :obj:`bool`, optional
-        Return the :obj:`~astropy.nddata.CCDData` object?  (Default: False)
-    mem_limit : :obj:`float`, optional
-        Memory limit for the image combination routine (Default: 8.192e9 bytes)
-
-    Returns
-    -------
-    :obj:`None` or :obj:`~astropy.nddata.CCDData`
-        Returns the :obj:`~astropy.nddata.CCDData` object if
-        ``returnccd=True``.
-    """
-
-    # Unpack the single-item tuple *infiles
-    if len(infiles) > 0:
-        (files,) = infiles
-    else:
-        files = []
-
-    # Check for inputs
-    if len(files) > 0 and inlist is not None:
-        warnings.warn(
-            "Only one of files or inlist may be specified, not both.", RuntimeWarning
-        )
-        print("Using the `inlist` for file combination.")
-
-    # Read in the text list inlist, if specified
-    if inlist is not None:
-        with pathlib.Path(inlist).open("r", encoding="utf-8") as f_obj:
-            files = []
-            for line in f_obj:
-                files.append(pathlib.Path(line.rstrip()))
-    # Ensure the files are pathlib.Path objects
-    else:
-        files = [pathlib.Path(fn) for fn in files]
-
-    # Check that specified input files exist
-    for fname in files:
-        if not fname.is_file():
-            raise FileNotFoundError(f"File {fname} does not exist.")
-
-    # Determine combine method (default = 'median')
-    combine = "median" if combine not in ["median", "mean"] else combine
-
-    # Create an ImgFileColl using the input files
-    file_cl = ccdproc.ImageFileCollection(filenames=files)
-
-    if printstat:
-        # Print out the statistics, for clarity
-        for img, fname in file_cl.ccds(return_fname=True):
-            mini, maxi, mean, stdv = utils.mmms(img)
-            print(
-                f"{fname}:: Min: {mini:.2f} Max: {maxi:.2f} "
-                + f"Mean: {mean:.2f} Stddev: {stdv:.2f}"
-            )
-
-    # Check for proper file list
-    if len(files) < 3:
-        warnings.warn(
-            "Proper combination requires at least three input images.  "
-            "Proceeding regardless...",
-            RuntimeWarning,
-        )
-
-    # Run the combination
-    comb_ccd = ccdproc.combine(
-        file_cl.files,
-        method=combine,
-        sigma_clip=True,
-        sigma_clip_dev_func=astropy.stats.mad_std,
-        mem_limit=mem_limit,
-    )
-
-    comb_ccd = ImageDirectory.clean_nans(comb_ccd)
-
-    # Add FITS keyword NCOMBINE and add HISTORY
-    comb_ccd.header.set(
-        "ncombine", len(file_cl.files), "# of input images in combination"
-    )
-    comb_ccd.header["HISTORY"] = PKG_NAME
-    comb_ccd.header["HISTORY"] = "Combined image created: " + savetime()
-    comb_ccd.header["HISTORY"] = (
-        f"{combine.title()} combined " + f"{len(file_cl.files)} files:"
-    )
-    for fname in file_cl.files:
-        comb_ccd.header["HISTORY"] = (
-            fname.name if isinstance(fname, pathlib.Path) else fname
-        )
-
-    # If returnccd is True, return now before thinking about saving.
-    if returnccd:
-        return comb_ccd
-
-    # Build filename (if not specified in call), save, remove input files
-    if outfn is None:
-        outfn = f"{files[0][:-5]}_comb{files[0][-5:]}"
-    print(f"Saving combined image as {outfn}")
-    comb_ccd.header = ImageDirectory.add_package_versions(comb_ccd.header)
-    comb_ccd.write(outfn, overwrite=overwrite)
-    if del_input:
-        for fname in files:
-            fname.unlink()
-    return None
-
-
-def parse_lois_ampids(hdr: astropy.io.fits.Header) -> str:
-    """
-    Parse the LOIS amplifier IDs
-
-    LOIS is particular about how it records which amplifiers are used to read
-    out the CCD.  Most of the time, users will use a single amplifier, whose ID
-    is recorded in the 'AMPID' FITS keyword.  If, however, more than one
-    amplifier is used, 'AMPID' is not present, and the amplifier combination
-    must be reconstructed from the present 'AMPIDnn' keywords.
-
-    Parameters
-    ----------
-    hdr : :obj:`~astropy.io.fits.Header`
-        The FITS header for which the amplifier IDs are to be parsed
-
-    Returns
-    -------
-    :obj:`str`
-        The amplifier designation(s) used
-    """
-    # Basic 1-amplifier case:
-    if int(hdr["NUMAMP"]) == 1:
-        return f"{hdr['AMPID'].strip()}"
-
-    # Else, parse out all of the "AMPIDnn" keywords, join and return
-    return "".join([val.strip() for kwd, val in hdr.items() if "AMPID" in kwd])
-
-
-def savetime(local: bool = False) -> str:
-    """
-    Make a human-readable timestamp
-
-    This is a cheap shortcut to return the current time as a timestamp in
-    either UT or local times.  The timestamp has the form::
-
-        %Y-%m-%d %H:%M:%S
-
-    Parameters
-    ----------
-    local : :obj:`bool`, optional
-        Use local rather than UT time?  (Default: False)
-
-    Returns
-    -------
-    :obj:`str`
-        The string timestamp
-    """
-    now = datetime.datetime.now(None if local else datetime.UTC)
-    return f"{now.isoformat(sep=' ',timespec='seconds')} {now.tzname()}"
-
-
-def trim_oscan(
-    ccd: astropy.nddata.CCDData, biassec: str, trimsec: str, oscan_order: int = 1
-) -> astropy.nddata.CCDData:
-    """
-    Subtract the overscan region and trim image to desired size
-
-    The CCDPROC function :func:`~ccdproc.subtract_overscan` expects the
-    ``TRIMSEC`` of the image (the part you want to keep) to span the entirety
-    of one dimension, with the ``BIASSEC`` (overscan section) being at the end
-    of the other dimension.
-
-    The various Lowell Observatory imagers have edge effects on all sides of
-    their respective chips, and so the ``TRIMSEC`` and ``BIASSEC`` do not meet
-    the expectations of :func:`~ccdproc.subtract_overscan`.  Therefore, this
-    function is a wrapper to first remove the undesired `ROWS` from top and
-    bottom if the image, then perform the :func:`~ccdproc.subtract_overscan`
-    fitting and subtraction, followed by trimming off the now-spent overscan
-    region.
-
-    Parameters
-    ----------
-    ccd : :obj:`~astropy.nddata.CCDData`
-        The CCDData object on which to operate
-    biassec : :obj:`str`
-        The IRAF-style overscan region to be subtracted from each frame.
-    trimsec : :obj:`str`
-        The IRAF-style image region to be retained in each frame.
-    oscan_order : :obj:`int`, optional
-        Order of the 1D Chebyshev polynomial to fit to the overscan region
-        (Default: 1)
-
-    Returns
-    -------
-    :obj:`~astropy.nddata.CCDData`
-        The trimmed CCDData object, with history of the operations added to the
-        FITS header.
-    """
-
-    # Convert the FITS bias & trim sections into slice classes for use
-    _, x_b = ccdproc.utils.slices.slice_from_string(biassec, fits_convention=True)
-    y_t, x_t = ccdproc.utils.slices.slice_from_string(trimsec, fits_convention=True)
-
-    # First trim off the top & bottom rows
-    ccd = ccdproc.trim_image(ccd[y_t.start : y_t.stop, :])
-
-    # Model & Subtract the overscan
-    # TODO: Consider options other than Chebyshev Polynomial for the overscan fitting
-    ccd = ccdproc.subtract_overscan(
-        ccd,
-        overscan=ccd[:, x_b.start : x_b.stop],
-        median=True,
-        model=astropy.modeling.models.Chebyshev1D(oscan_order),
-    )
-
-    # Trim the overscan & return
-    return ccdproc.trim_image(ccd[:, x_t.start : x_t.stop])
-
-
-def wrap_trim_oscan(
-    ccd: astropy.nddata.CCDData, gain_correct: bool = True
-) -> astropy.nddata.CCDData:
-    """
-    Wrap the :func:`trim_oscan` function to handle multiple amplifiers
-
-    This function will perform the magic of stitching together multi-amplifier
-    reads.  There may be instrument-specific issues related to this, but it is
-    likely that only LMI will ever be read out in multi-amplifier mode. When
-    requested, each amplifier is gain-corrected before the pieces are joined.
-
-    Parameters
-    ----------
-    ccd : :obj:`~astropy.nddata.CCDData`
-        The CCDData object upon which to operate
-    gain_correct : :obj:`bool`
-        Multiply by the CCD gain before returning?  (Default: True)
-
-    Returns
-    -------
-    :obj:`~astropy.nddata.CCDData`
-        The properly trimmed and overscan-subtracted CCDData object,
-        optionally gain corrected
-    """
-    # Shorthand
-    hdr = ccd.header
-
-    # The "usual" case, straight pass-through from `trim_oscan()`, with
-    #   optional gain correction
-    if hdr["NUMAMP"] == 1:
-        trimmed = trim_oscan(ccd, hdr["BIASSEC"], hdr["TRIMSEC"])
-        if gain_correct and trimmed.unit == u.adu:
-            trimmed = ccdproc.gain_correct(
-                trimmed, hdr["GAIN"], gain_unit=u.electron / u.adu
-            )
-        return trimmed
-
-    # The multi-amplifier case is a little more involved.
-    # First, make an empty FLOAT array for the trim output
-    float_array = np.zeros_like(ccd.data, dtype=float)
-
-    # Use the individual amplifier BIAS and TRIM sections to process
-    amp_nums = [kwd[-2:] for kwd in hdr.keys() if "AMPID" in kwd]
-    for amp_num in amp_nums:
-        # Totally hacking tweak of the LMI situation for 2x2 binning:
-        if "51:1585" in hdr[f"TRIM{amp_num}"]:
-            hdr[f"TRIM{amp_num}"] = hdr[f"TRIM{amp_num}"].replace("51:1585", "51:1584")
-            xstart = xstop = 1
-            hdr["TRIMSEC"] = hdr["TRIMSEC"].replace("51:3121", "52:3120")
-        elif "1586:3121" in hdr[f"TRIM{amp_num}"]:
-            hdr[f"TRIM{amp_num}"] = hdr[f"TRIM{amp_num}"].replace(
-                "1586:3121", "1587:3121"
-            )
-            xstart = xstop = -1
-            hdr["TRIMSEC"] = hdr["TRIMSEC"].replace("51:3121", "52:3120")
-        else:
-            xstart = xstop = 0
-        yrange, xrange = ccdproc.utils.slices.slice_from_string(
-            hdr[f"TRIM{amp_num}"], fits_convention=True
-        )
-        chunk = trim_oscan(ccd, hdr[f"BIAS{amp_num}"], hdr[f"TRIM{amp_num}"])
-        if gain_correct and ccd.unit == u.adu:
-            chunk = ccdproc.gain_correct(
-                chunk, hdr[f"GAIN_{amp_num}"], gain_unit=u.electron / u.adu
-            )
-
-        float_array[
-            yrange.start : yrange.stop, xrange.start + xstart : xrange.stop + xstop
-        ] = chunk.data
-
-    ccd.data = float_array
-    if gain_correct and ccd.unit == u.adu:
-        ccd.unit = u.electron
-
-    # Return the final trimmed image
-    ytrim, xtrim = ccdproc.utils.slices.slice_from_string(
-        hdr["TRIMSEC"], fits_convention=True
-    )
-    return ccdproc.trim_image(ccd[ytrim.start : ytrim.stop, xtrim.start : xtrim.stop])

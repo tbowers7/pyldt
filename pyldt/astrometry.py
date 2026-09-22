@@ -13,6 +13,9 @@ Astrometry.Net
 
 from __future__ import annotations
 
+# Astropy exposes units and HDU members dynamically.
+# pylint: disable=no-member
+
 # Built-In Libraries
 import pathlib
 import time
@@ -29,7 +32,7 @@ import numpy as np
 import requests.exceptions
 
 # Internal Imports
-from pyldt import reduction
+from pyldt.calibration import PKG_NAME, savetime, write_ccd_atomic
 
 # Define API
 __all__ = ["solve_field", "validate_solution"]
@@ -46,6 +49,9 @@ def solve_field(
     validate: bool = True,
     add_scale: bool = False,
     add_center_coords: bool = False,
+    max_attempts: int = 5,
+    retry_delay: float = 30,
+    solve_timeout: float = 120,
     debug: bool = False,
 ) -> tuple[astropy.wcs.WCS, bool]:
     """
@@ -85,6 +91,13 @@ def solve_field(
     add_center_coords : bool, optional
         Add RA/DEC keywords to the FITS header corresponding to the center of
         the image using the solution from the Astrometry.Net?  (Default: False)
+    max_attempts : int, optional
+        Maximum number of submission or monitoring attempts before propagating
+        the last network error. (Default: 5)
+    retry_delay : float, optional
+        Seconds to wait between failed network attempts. (Default: 30)
+    solve_timeout : float, optional
+        Timeout passed when monitoring an existing submission. (Default: 120)
     debug : bool, optional
         Print debugging statements? (Default: False)
 
@@ -107,7 +120,7 @@ def solve_field(
         # Check if `plate_scale` is a Quantity:
         if isinstance(plate_scale, u.Quantity):
             try:
-                plate_scale <<= u.arcsec / u.pix
+                plate_scale = plate_scale.to(u.arcsec / u.pix)
                 scale_lower = plate_scale * (1 - plate_error / 100)
                 scale_upper = plate_scale * (1 + plate_error / 100)
                 scale_units = "arcsecperpix"
@@ -123,12 +136,19 @@ def solve_field(
         else:
             plate_scale = None
 
-    # Loop variables
-    try_again = True
-    submission_id = None
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least one.")
+    if retry_delay < 0:
+        raise ValueError("retry_delay cannot be negative.")
+    if plate_error < 0:
+        raise ValueError("plate_error cannot be negative.")
 
-    # Loop until a solution is returned
-    while try_again:
+    # Loop variables
+    submission_id = None
+    wcs_header = None
+
+    # Retry transient service failures, but never wait forever.
+    for attempt in range(max_attempts):
         try:
             if not submission_id:
                 # Find objects in the image and send the list to Astrometry.Net
@@ -147,17 +167,28 @@ def solve_field(
                 )
             else:
                 # Subsequent times through the loop, check on the submission
-                wcs_header = ast.monitor_submission(submission_id, solve_timeout=120)
+                wcs_header = ast.monitor_submission(
+                    submission_id, solve_timeout=solve_timeout
+                )
         except astroquery.exceptions.TimeoutError as error:
-            submission_id = error.args[1]
-        except (ConnectionError, requests.exceptions.JSONDecodeError):
-            pass
-        except requests.exceptions.ReadTimeout:
-            # Wait 30 seconds and try again
-            time.sleep(30)
+            if len(error.args) > 1:
+                submission_id = error.args[1]
+            if attempt == max_attempts - 1:
+                raise
+        except (
+            ConnectionError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.JSONDecodeError,
+            requests.exceptions.ReadTimeout,
+        ):
+            if attempt == max_attempts - 1:
+                raise
         else:
-            # Got a result: Terminate
-            try_again = False
+            break
+        if retry_delay:
+            time.sleep(retry_delay)
+    if wcs_header is None:
+        raise RuntimeError("Astrometry.Net returned no WCS solution.")
     print("done.")
 
     # Instantiate a WCS object from the wcs header returned by Astronmetry.Net
@@ -165,10 +196,11 @@ def solve_field(
 
     # Similarly, instantiate a WCS object from the original file
     with astropy.io.fits.open(img_fn) as hdulist:
-        existing_wcs = astropy.wcs.WCS(hdulist[0].header)
+        original_header = hdulist[0].header.copy()
+        existing_wcs = astropy.wcs.WCS(original_header)
 
     # Read in the FITS file to a CCDData object, applying BUNIT as necessary
-    bunit = hdulist[0].header.get("bunit", None)
+    bunit = original_header.get("bunit", None)
     ccd = astropy.nddata.CCDData.read(img_fn, unit="adu" if bunit is None else None)
 
     # Validate the solved WCS against the lois-written WCS
@@ -193,15 +225,17 @@ def solve_field(
     # If `add_scale`, add it:
     if add_scale:
         try:
+            comments = wcs_header["COMMENT"]
+            if isinstance(comments, str):
+                comments = [comments]
             scale_str = next(
-                (x for x in wcs_header["COMMENT"] if x.startswith("scale:")), None
+                (comment for comment in comments if comment.startswith("scale:")),
+                None,
             )
-            try:
+            if scale_str is not None:
                 solved_scale = float(scale_str.split()[1])
-            except TypeError:
-                solved_scale = -1.0
-            ccd.header["SCALE"] = np.round(solved_scale, 3)
-        except KeyError:
+                ccd.header["SCALE"] = np.round(solved_scale, 3)
+        except (KeyError, IndexError, ValueError):
             # Bad solution, "COMMENT"s not included in returned header
             pass
 
@@ -216,16 +250,16 @@ def solve_field(
             ccd.header["DEC"] = dec.replace("d", ":").replace("m", ":").replace("s", "")
 
     # Add some history information
-    ccd.header["HISTORY"] = reduction.PKG_NAME
+    ccd.header["HISTORY"] = PKG_NAME
     ccd.header["HISTORY"] = "Plate solution performed via astroquery.astrometry_net"
-    ccd.header["HISTORY"] = "Solved WCS added: " + reduction.savetime()
+    ccd.header["HISTORY"] = "Solved WCS added: " + savetime()
 
     if debug:
         # Print out the final header before writing to disk
         print(f"\n{ccd.header}")
 
     # Write the CCDData object to disk with the updated WCS information
-    ccd.write(img_fn, overwrite=True)
+    write_ccd_atomic(ccd, img_fn)
 
     return use_wcs, is_solved
 
@@ -235,6 +269,7 @@ def validate_solution(
     lois: astropy.wcs.WCS,
     rtol: float = 1e-05,
     atol: float = 3e-07,
+    max_center_separation: u.Quantity | float = 1 * u.deg,
     debug: bool = False,
 ) -> tuple[astropy.wcs.WCS, bool]:
     """
@@ -253,6 +288,9 @@ def validate_solution(
         Relative tolerance, passed to np.allclose()  [Default: 1e-05]
     atol : `float`, optional
         Absolute tolerance, passed to np.allclose()  [Default: 3e-07]
+    max_center_separation : `astropy.units.Quantity` or `float`, optional
+        Maximum separation between the two WCS reference sky positions. A
+        unitless value is interpreted as degrees. (Default: 1 degree)
     debug : `bool`, optional
         Print debugging statements?  [Default: False]
 
@@ -263,10 +301,23 @@ def validate_solution(
     is_close : `bool`
         Whether the solved WCS is close to the lois default
     """
-    # Ask numpy!
-    is_close = np.allclose(
+    scale_is_close = np.allclose(
         solved.pixel_scale_matrix, lois.pixel_scale_matrix, rtol=rtol, atol=atol
     )
+    separation_limit = u.Quantity(max_center_separation, u.deg)
+    if separation_limit <= 0 * u.deg:
+        raise ValueError("max_center_separation must be positive.")
+    try:
+        solved_center = astropy.coordinates.SkyCoord(
+            *solved.celestial.wcs.crval, unit=u.deg
+        )
+        lois_center = astropy.coordinates.SkyCoord(
+            *lois.celestial.wcs.crval, unit=u.deg
+        )
+        center_is_close = solved_center.separation(lois_center) <= separation_limit
+    except (ValueError, IndexError):
+        center_is_close = False
+    is_close = bool(scale_is_close and center_is_close)
 
     print(f"\nThe Astrometry.Net solution ≈ the lois default:   {is_close}")
     if debug:

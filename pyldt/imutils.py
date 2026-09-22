@@ -23,6 +23,7 @@ import numpy as np
 
 # Internal-ish Imports
 from obstools import deveny_grangle
+from pyldt.calibration import write_ccd_atomic
 
 
 def make_flat_as_star(
@@ -32,7 +33,8 @@ def make_flat_as_star(
     copyfn: str | pathlib.Path | astropy.nddata.CCDData | None = None,
     verbose: bool = True,
     objname: str | None = None,
-) -> None:
+    outfn: str | pathlib.Path | None = None,
+) -> pathlib.Path:
     """
     Make a DeVeny flat-field frame resemble a stellar spectrum.
 
@@ -54,22 +56,28 @@ def make_flat_as_star(
         Print processing details.
     objname : str, optional
         Object name inserted into the output header.
-    """
+    outfn : path-like, optional
+        Output filename. When omitted, path inputs are written beside the flat;
+        in-memory inputs are written in the current directory.
 
-    if copyfn is None:
-        copyfn = flatfn
+    Returns
+    -------
+    pathlib.Path
+        Filename written.
+    """
 
     bias = astropy.nddata.CCDData.read(biasfn)
     flat = (
-        flatfn
+        flatfn.copy()
         if isinstance(flatfn, astropy.nddata.CCDData)
         else astropy.nddata.CCDData.read(flatfn)
     )
-    copy = (
-        copyfn
-        if isinstance(copyfn, astropy.nddata.CCDData)
-        else astropy.nddata.CCDData.read(copyfn)
-    )
+    if copyfn is None:
+        copy = flat.copy()
+    elif isinstance(copyfn, astropy.nddata.CCDData):
+        copy = copyfn.copy()
+    else:
+        copy = astropy.nddata.CCDData.read(copyfn)
 
     if objname is None:
         objname = "FlatFieldAsStar"
@@ -102,8 +110,15 @@ def make_flat_as_star(
             f"Stats on input flat... median: {np.median(flat.data)}, max: {np.max(flat.data)}"
         )
 
-    # Start with the bais for the data
-    copy.data = bias.data
+    if copy.shape != bias.shape or bias.shape != flat.shape:
+        raise ValueError("The flat, bias, and copy frames must have matching shapes.")
+    if flat.shape[0] < 320 or flat.shape[1] < 1500:
+        raise ValueError(
+            "The DeVeny flat-as-star conversion requires at least a 320x1500 frame."
+        )
+
+    # Start with an independent copy of the bias data.
+    copy.data = bias.data.copy()
 
     # Define the strip for use here:
     ymin, ymax = (305, 320)
@@ -130,8 +145,16 @@ def make_flat_as_star(
     # Put the gaussian-ed strip into the copy
     copy.data[ymin:ymax, :] = strip2 + base
 
-    # Write the thing to the outfile
-    copy.write(f"{copy.header['filename'].split('/')[-1]}", overwrite=True)
+    if outfn is None:
+        output_dir = (
+            pathlib.Path(flatfn).parent
+            if not isinstance(flatfn, astropy.nddata.CCDData)
+            else pathlib.Path.cwd()
+        )
+        outfn = output_dir / pathlib.Path(copy.header["filename"]).name
+    output_path = pathlib.Path(outfn)
+    write_ccd_atomic(copy, output_path)
+    return output_path
 
 
 def load_pypeit_flat(
@@ -162,9 +185,11 @@ def load_pypeit_flat(
         flat_dict = {}
         for hdu in hdul:
             if "EXTNAME" in hdu.header:
-                flat_dict[hdu.header["EXTNAME"]] = hdu.data
+                flat_dict[hdu.header["EXTNAME"]] = (
+                    None if hdu.data is None else hdu.data.copy()
+                )
 
-        if lcen and gpmm:
+        if lcen is not None and gpmm is not None:
             grangle, _ = deveny_grangle.compute_grangle(gpmm, lcen)
             flat_dict["GRANGLE"] = grangle
 
@@ -177,8 +202,9 @@ def load_pypeit_2dspec() -> None:
 
     Notes
     -----
-    This placeholder currently performs no operation.
+    This interface has not yet been implemented.
     """
+    raise NotImplementedError("PypeIt 2D spectrum loading is not implemented.")
 
 
 def load_pypeit_1dspec() -> None:
@@ -187,5 +213,6 @@ def load_pypeit_1dspec() -> None:
 
     Notes
     -----
-    This placeholder currently performs no operation.
+    This interface has not yet been implemented.
     """
+    raise NotImplementedError("PypeIt 1D spectrum loading is not implemented.")
